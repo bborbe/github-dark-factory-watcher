@@ -39,3 +39,30 @@ var _ = Describe("DeriveTaskID", func() {
 		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a")).To(Equal(expected))
 	})
 })
+
+var _ = Describe("DeriveTaskIDForce", func() {
+	var namespace = uuid.MustParse("b1f4c2a9-7e63-4d81-9a05-3c8e0f5a6d24")
+
+	It("is deterministic — same inputs (incl. nonce) always produce the same UUID", func() {
+		a := pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1000")
+		b := pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1000")
+		Expect(a).To(Equal(b))
+	})
+
+	It("differs from the canonical DeriveTaskID for the same (PR, SHA)", func() {
+		canonical := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123")
+		forced := pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1000")
+		Expect(forced).NotTo(Equal(canonical))
+	})
+
+	It("produces different UUIDs for different nonces (same PR, SHA)", func() {
+		a := pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1000")
+		b := pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1001")
+		Expect(a).NotTo(Equal(b))
+	})
+
+	It("produces the expected pinned UUID from the salted key format", func() {
+		expected := uuid.NewSHA1(namespace, []byte("bborbe/widget#42@abc123!1000"))
+		Expect(pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1000")).To(Equal(expected))
+	})
+})
