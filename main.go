@@ -117,8 +117,6 @@ type application struct {
 	// TopicPrefix selects the Kafka topic prefix used for CQRS topic construction
 	// (e.g. "develop" / "master"); independent of Stage.
 	TopicPrefix base.TopicPrefix `required:"false" arg:"topic-prefix" env:"TOPIC_PREFIX" usage:"Kafka topic prefix for CQRS topic construction"`
-
-	TriggerHandler http.Handler
 }
 
 // resolveAuth determines the GitHub auth mode from environment variables and returns
@@ -254,15 +252,6 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		taskCfg,
 	)
 
-	// HTTP-side sender backs the /trigger handler.
-	triggerSender := factory.CreateTriggerCommandSender(
-		ctx,
-		syncProducer,
-		a.TopicPrefix,
-	)
-	triggerHandler := factory.CreateSinglePRTriggerHandler(triggerSender)
-	a.TriggerHandler = libhttp.NewJSONErrorHandler(triggerHandler)
-
 	// In-pod command consumer: third run.Func alongside poll + HTTP.
 	// Session-scoped offset store — replays the request topic from OffsetOldest
 	// on pod restart; safe because the downstream CreateTaskCommand is
@@ -328,7 +317,6 @@ func (a *application) createHTTPServer(poll run.Func) run.Func {
 		router.Path("/setloglevel/{level}").
 			Handler(log.NewSetLoglevelHandler(ctx, log.NewLogLevelSetter(2, 5*time.Minute)))
 		router.Path("/check").Handler(libhttp.NewBackgroundRunHandler(ctx, poll))
-		router.Path("/trigger").Handler(a.TriggerHandler)
 		glog.V(2).Infof("http server listening on %s", a.Listen)
 		return libhttp.NewServer(a.Listen, router).Run(ctx)
 	}

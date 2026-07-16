@@ -11,7 +11,6 @@ require (
 	github.com/bborbe/kv v1.21.2
 	github.com/bborbe/log v1.6.14
 	github.com/bborbe/maintainer v0.47.0
-	github.com/bborbe/parse v1.10.13
 	github.com/bborbe/run v1.9.28
 	github.com/bborbe/sentry v1.9.18
 	github.com/bborbe/service v1.10.1
@@ -34,6 +33,7 @@ require (
 	github.com/bborbe/collection v1.20.13 // indirect
 	github.com/bborbe/k8s v1.14.3 // indirect
 	github.com/bborbe/math v1.3.11 // indirect
+	github.com/bborbe/parse v1.10.13 // indirect
 	github.com/bborbe/strimzi v1.8.5 // indirect
 	github.com/bborbe/vault-cli v0.68.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

@@ -24,18 +24,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var _ = Describe("CreateTriggerCommandSender", func() {
-	It("returns a non-nil sender", func() {
-		syncProducer := new(libkafkamocks.KafkaSyncProducer)
-		sender := factory.CreateTriggerCommandSender(
-			context.Background(),
-			syncProducer,
-			base.TopicPrefix("develop"),
-		)
-		Expect(sender).NotTo(BeNil())
-	})
-})
-
 var _ = Describe("CreateCommandConsumer", func() {
 	It("returns a non-nil run.Func when all dependencies are non-nil", func() {
 		syncProducer := new(libkafkamocks.KafkaSyncProducer)

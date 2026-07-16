@@ -12,7 +12,6 @@ import (
 	task "github.com/bborbe/agent/command/task"
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
-	cqrsiam "github.com/bborbe/cqrs/iam"
 	"github.com/bborbe/github-dark-factory-watcher/pkg"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/command"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/filter"
@@ -70,24 +69,6 @@ func CreateWatcher(
 		scope,
 		scopeFilter,
 		cfg,
-	)
-}
-
-// CreateTriggerCommandSender constructs a typed trigger command sender backed by
-// a Kafka sync producer. This is the HTTP-side sender: the /trigger handler
-// publishes TriggerCommand messages through it.
-//
-// CommandCreator and Initiator are built once here and reused across every
-// SendCommand call (per cqrs/docs/producing-commands.md "Factory Wiring").
-func CreateTriggerCommandSender(
-	ctx context.Context,
-	syncProducer libkafka.SyncProducer,
-	topicPrefix base.TopicPrefix,
-) command.TriggerCommandSender {
-	return command.NewTriggerCommandSender(
-		base.NewCommandCreator(base.RequestIDChannel(ctx)),
-		cqrsiam.Initiator("github-dark-factory-watcher"),
-		cdb.NewCommandObjectSender(syncProducer, topicPrefix, log.DefaultSamplerFactory),
 	)
 }
 

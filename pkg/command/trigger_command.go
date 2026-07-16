@@ -33,10 +33,9 @@ type TriggerCommand struct {
 }
 
 // Validate enforces the command's schema rules. URL must be non-empty and must
-// parse to a GitHub-platform PR URL (same rules as the HTTP handler's
-// validateTriggerURL — see pkg/handler/trigger_handler.go). Non-GitHub
-// platforms and unparseable URLs are rejected here so a buggy client that
-// bypasses the HTTP layer cannot enqueue garbage.
+// parse to a GitHub-platform PR URL. It runs both at publish time (the gateway
+// wraps this payload) and again in the consumer's executor as defense-in-depth,
+// so a buggy producer cannot enqueue garbage the executor would then act on.
 func (cmd TriggerCommand) Validate(ctx context.Context) error {
 	return validation.All{
 		validation.Name("URL", validation.HasValidationFunc(func(ctx context.Context) error {

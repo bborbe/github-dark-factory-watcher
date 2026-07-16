@@ -54,6 +54,9 @@ func (d *memDB) View(
 	return fn(ctx, &memTx{db: d})
 }
 
+// Sync is intentionally a no-op: offset commits are deliberately not durable.
+// Re-delivery on crash-restart (replay from OffsetOldest) is expected and safe
+// because the downstream CreateTaskCommand is idempotent via the derived task_id.
 func (d *memDB) Sync() error {
 	return nil
 }

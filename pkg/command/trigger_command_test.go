@@ -9,14 +9,9 @@ import (
 	"encoding/json"
 
 	"github.com/bborbe/cqrs/base"
-	cdb "github.com/bborbe/cqrs/cdb"
-	cqrsiam "github.com/bborbe/cqrs/iam"
-	cqrsmocks "github.com/bborbe/cqrs/mocks"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/command"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	lib "github.com/bborbe/maintainer"
 )
 
 var _ = Describe("TriggerCommandOperation", func() {
@@ -108,42 +103,4 @@ var _ = Describe("TriggerCommand.Validate", func() {
 		Entry("ftp scheme",
 			"ftp://github.com/owner/repo/pull/1", true, ""),
 	)
-})
-
-var _ = Describe("NewTriggerCommandSender", func() {
-	var (
-		ctx           context.Context
-		cdbSender     *cqrsmocks.CDBCommandObjectSender
-		triggerSender command.TriggerCommandSender
-	)
-
-	BeforeEach(func() {
-		ctx = context.Background()
-		cdbSender = &cqrsmocks.CDBCommandObjectSender{}
-		triggerSender = command.NewTriggerCommandSender(
-			newTestCommandCreator(10),
-			cqrsiam.Initiator("test-watcher"),
-			cdbSender,
-		)
-	})
-
-	It("publishes one CommandObject keyed on the github-dark-factory v1 schema", func() {
-		cmd := command.TriggerCommand{
-			URL: "https://github.com/bborbe/maintainer/pull/42",
-		}
-		Expect(triggerSender.SendCommand(ctx, cmd)).To(Succeed())
-
-		Expect(cdbSender.SendCommandObjectCallCount()).To(Equal(1))
-		_, got := cdbSender.SendCommandObjectArgsForCall(0)
-		Expect(got.Command.Operation).To(Equal(command.TriggerCommandOperation))
-		Expect(got.SchemaID).To(Equal(cdb.SchemaID(lib.GithubDarkFactoryV1SchemaID)))
-	})
-
-	It("does not call cdb sender when Validate fails", func() {
-		// Empty URL fails Validate; sender must short-circuit.
-		cmd := command.TriggerCommand{URL: ""}
-		err := triggerSender.SendCommand(ctx, cmd)
-		Expect(err).To(HaveOccurred())
-		Expect(cdbSender.SendCommandObjectCallCount()).To(Equal(0))
-	})
 })

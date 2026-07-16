@@ -32,6 +32,11 @@ func DeriveTaskID(owner, repo string, number int, sha string) uuid.UUID {
 // differ from DeriveTaskID(...) for the same (PR, SHA), so the agent controller's
 // task-file dedup does NOT skip it and a fresh task is created. The nonce is the
 // caller's responsibility (typically a microsecond-resolution time value).
+//
+// The nonce is expected to carry microsecond resolution (e.g. UnixMicro): two
+// force-triggers landing in the same microsecond could theoretically derive the
+// same identifier and collide. Future readers should not swap this for a coarser
+// clock (second/millisecond resolution widens that collision window).
 func DeriveTaskIDForce(owner, repo string, number int, sha, nonce string) uuid.UUID {
 	key := fmt.Sprintf("%s/%s#%d@%s!%s", owner, repo, number, sha, nonce)
 	return uuid.NewSHA1(darkFactoryWatcherNamespace, []byte(key))
