@@ -13,11 +13,15 @@ import (
 	"github.com/bborbe/cqrs/base"
 	"github.com/bborbe/cqrs/cdb"
 	"github.com/bborbe/github-dark-factory-watcher/pkg"
+	"github.com/bborbe/github-dark-factory-watcher/pkg/command"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/filter"
 	libkafka "github.com/bborbe/kafka"
+	libkv "github.com/bborbe/kv"
 	"github.com/bborbe/log"
+	"github.com/bborbe/run"
 	libtime "github.com/bborbe/time"
 
+	lib "github.com/bborbe/maintainer"
 	"github.com/bborbe/maintainer/githubapp"
 )
 
@@ -65,5 +69,49 @@ func CreateWatcher(
 		scope,
 		scopeFilter,
 		cfg,
+	)
+}
+
+// CreateCommandConsumer wires a run.Func that consumes TriggerCommand messages
+// from the github-dark-factory watcher's request topic and runs them through the
+// single-PR implement pipeline (GitHub fetch → candidate gate → publish).
+//
+// currentDateTime is the injected libtime.CurrentDateTimeGetter passed through
+// to the trigger executor so it can derive a time-salted task identifier when
+// the TriggerCommand has Force=true. The non-force path does not consult the
+// clock.
+//
+// The function is pure composition: no business logic, no conditionals. It uses
+// cdb.RunCommandConsumerTxDefault (auto-wraps the transaction) per the
+// go-cqrs/auto-tx-wrapper-no-manual-wrap rule — do NOT manually wrap the
+// executor with kv.NewTransactionMiddleware.
+func CreateCommandConsumer(
+	saramaClientProvider libkafka.SaramaClientProvider,
+	syncProducer libkafka.SyncProducer,
+	db libkv.DB,
+	ghClient pkg.GitHubClient,
+	createSender task.CreateCommandSender,
+	taskCfg pkg.TaskConfig,
+	metrics pkg.Metrics,
+	topicPrefix base.TopicPrefix,
+	currentDateTime libtime.CurrentDateTimeGetter,
+) run.Func {
+	executors := cdb.CommandObjectExecutorTxs{
+		command.NewTriggerCommandExecutor(
+			ghClient,
+			createSender,
+			taskCfg,
+			metrics,
+			currentDateTime,
+		),
+	}
+	return cdb.RunCommandConsumerTxDefault(
+		saramaClientProvider,
+		syncProducer,
+		db,
+		lib.GithubDarkFactoryV1SchemaID,
+		topicPrefix,
+		false, // ignoreUnsupported
+		executors,
 	)
 }

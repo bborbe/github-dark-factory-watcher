@@ -32,6 +32,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	lib "github.com/bborbe/maintainer"
 	repoallowlist "github.com/bborbe/maintainer/repoallowlist"
 )
 
@@ -181,7 +182,8 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return errors.Wrapf(ctx, err, "parse poll interval %q", a.PollInterval)
 	}
 
-	startTime := libtime.NewCurrentDateTime().Now()
+	currentDateTime := libtime.NewCurrentDateTime()
+	startTime := currentDateTime.Now()
 	backfillDuration, err := parseBackfillDuration(ctx, a.BackfillDuration)
 	if err != nil {
 		return errors.Wrap(ctx, err, "parse backfill duration")
@@ -231,6 +233,14 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 	ghClient := pkg.NewGitHubClient(httpClient)
 	metrics := pkg.NewMetrics(nil)
 
+	taskCfg := pkg.TaskConfig{
+		Stage:       a.Stage,
+		MaxSlugLen:  a.MaxSlugLen,
+		MaxTitleLen: a.MaxTitleLen,
+		TaskSuffix:  a.TaskSuffix,
+		TargetVault: a.TargetVault,
+	}
+
 	w := factory.CreateWatcher(
 		ghClient,
 		createSender,
@@ -239,22 +249,37 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		startTime,
 		a.RepoScope,
 		scopeFilter,
-		pkg.TaskConfig{
-			Stage:       a.Stage,
-			MaxSlugLen:  a.MaxSlugLen,
-			MaxTitleLen: a.MaxTitleLen,
-			TaskSuffix:  a.TaskSuffix,
-			TargetVault: a.TargetVault,
-		},
+		taskCfg,
 	)
 
-	glog.V(2).Infof("github-dark-factory-watcher starting stage=%s scope=%s interval=%s listen=%s",
-		a.Stage, a.RepoScope, a.PollInterval, a.Listen)
+	// In-pod command consumer: third run.Func alongside poll + HTTP.
+	// Session-scoped offset store — replays the request topic from OffsetOldest
+	// on pod restart; safe because the downstream CreateTaskCommand is
+	// idempotent via the derived task_id.
+	saramaClientProvider := libkafka.NewSaramaClientProviderNew(a.KafkaBrokers)
+	db := pkg.NewMemDB()
+	commandConsumer := factory.CreateCommandConsumer(
+		saramaClientProvider,
+		syncProducer,
+		db,
+		ghClient, // shared with the watcher
+		createSender,
+		taskCfg,
+		metrics, // shared with the watcher
+		a.TopicPrefix,
+		currentDateTime, // time-injected clock for Force=true nonce
+	)
+
+	glog.V(2).
+		Infof("github-dark-factory-watcher starting stage=%s scope=%s interval=%s listen=%s schema=%s", a.Stage, a.RepoScope, a.PollInterval, a.Listen, lib.GithubDarkFactoryV1SchemaID)
 
 	pollOnce := a.pollOnce(w)
+
+	// Order: poll → HTTP → command consumer (three run.Funcs).
 	return run.CancelOnFirstFinish(ctx,
 		a.runPollLoop(pollOnce, pollInterval),
 		a.createHTTPServer(pollOnce),
+		commandConsumer,
 	)
 }
 
