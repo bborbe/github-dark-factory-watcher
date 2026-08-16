@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- update Go to 1.26.6 and update dependencies
+
 ## v0.2.0
 
 - feat: add a CQRS `/trigger` command consumer so an operator can force a specific draft PR into the dark-factory-implement pipeline immediately (skip the poll) and re-run an already-processed PR (`force=true`). Re-adds an in-pod command subsystem (mirrors the pr-review/releaser/build watchers): `TriggerCommand{url,force}` on schema `maintainer-githubdarkfactory-v1` (bumped `maintainer` → v0.47.0 for `GithubDarkFactoryV1SchemaID`), consumed by a 3rd `run.Func` whose executor runs `GetPRDetails → darkfactory.Evaluate` (same candidate gate as the poll) → `DeriveTaskID`/`DeriveTaskIDForce` (salted nonce for force) → `BuildCreateCommand` → Kafka. Non-candidate PRs are skipped (`ErrCommandObjectSkipped`); transient GitHub/Kafka errors retry.
