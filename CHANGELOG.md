@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.3.2
 
 - fix: align the Dockerfile Go pin with `go.mod` — `FROM golang:1.26.6` against `go 1.27.0` made the image build fail at `RUN go build` with `go: go.mod requires go >= 1.27.0 (running go 1.26.6; GOTOOLCHAIN=local)`. The service ran in prod on a stale image that could no longer be rebuilt. A scan of all 18 bborbe split repos on 2026-08-30 found this was the only mismatch; every other repo agrees at `1.27.0`. It drifted alone because this repo is missing from the weekly rebuild runbook's maintainer list, so no run ever built it, and the runbook's Go-pin consistency check only scans the trading repo.
 
