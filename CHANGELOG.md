@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: align the Dockerfile Go pin with `go.mod` — `FROM golang:1.26.6` against `go 1.27.0` made the image build fail at `RUN go build` with `go: go.mod requires go >= 1.27.0 (running go 1.26.6; GOTOOLCHAIN=local)`. The service ran in prod on a stale image that could no longer be rebuilt. A scan of all 18 bborbe split repos on 2026-08-30 found this was the only mismatch; every other repo agrees at `1.27.0`. It drifted alone because this repo is missing from the weekly rebuild runbook's maintainer list, so no run ever built it, and the runbook's Go-pin consistency check only scans the trading repo.
+
 ## v0.3.1
 
 - chore: update Go to 1.27.0 and github.com/bborbe/agent to v0.84.0, github.com/bborbe/cqrs to v0.6.9, github.com/bborbe/errors to v1.6.0, github.com/bborbe/http to v1.26.25, github.com/bborbe/kafka to v1.25.9, github.com/bborbe/kv to v1.21.12, github.com/bborbe/log to v1.6.25, github.com/bborbe/maintainer to v0.50.3, github.com/bborbe/run to v1.10.0, github.com/bborbe/sentry to v1.10.0, github.com/bborbe/service to v1.10.10, github.com/bborbe/time to v1.27.11, github.com/bborbe/validation to v1.4.23, github.com/onsi/gomega to v1.43.0
