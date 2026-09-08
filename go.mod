@@ -16,14 +16,14 @@ require (
 	github.com/bborbe/errors v1.6.1
 	github.com/bborbe/http v1.26.26
 	github.com/bborbe/kafka v1.25.16
-	github.com/bborbe/kv v1.21.14
+	github.com/bborbe/kv v1.21.15
 	github.com/bborbe/log v1.6.25
 	github.com/bborbe/maintainer v0.50.7
-	github.com/bborbe/run v1.10.2
-	github.com/bborbe/sentry v1.10.1
+	github.com/bborbe/run v1.10.3
+	github.com/bborbe/sentry v1.10.2
 	github.com/bborbe/service v1.10.13
 	github.com/bborbe/time v1.27.14
-	github.com/bborbe/validation v1.5.0
+	github.com/bborbe/validation v1.5.1
 	github.com/golang/glog v1.2.5
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/uuid v1.6.0
