@@ -18,9 +18,9 @@ require (
 	github.com/bborbe/kafka v1.27.0
 	github.com/bborbe/kv v1.21.17
 	github.com/bborbe/log v1.7.4
-	github.com/bborbe/maintainer v0.50.8
+	github.com/bborbe/maintainer v0.50.9
 	github.com/bborbe/run v1.11.2
-	github.com/bborbe/sentry v1.10.3
+	github.com/bborbe/sentry v1.10.4
 	github.com/bborbe/service v1.10.15
 	github.com/bborbe/time v1.27.16
 	github.com/bborbe/validation v1.5.3
