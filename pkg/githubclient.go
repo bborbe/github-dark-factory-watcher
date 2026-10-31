@@ -98,7 +98,24 @@ type GitHubClient interface {
 // NewGitHubClient returns a GitHubClient backed by the real GitHub API.
 // The httpClient must already carry authentication (App auth via
 // lib/githubapp.NewClient).
+//
+// The client's transport is wrapped to log one line per non-2xx response
+// (status, rate-limit bucket, remaining, Retry-After, body snippet) via
+// logNon2xxV2 — the only record of whether a 429/403 is primary-quota
+// exhaustion or secondary rate limiting. go-github does not log at its HTTP
+// boundary, so without this line that evidence is lost. A nil httpClient is
+// left unwrapped so the go-github default client still works.
 func NewGitHubClient(httpClient *http.Client) GitHubClient {
+	if httpClient != nil {
+		inner := httpClient.Transport
+		if inner == nil {
+			inner = http.DefaultTransport
+		}
+		httpClient.Transport = &non2xxLoggingTransport{
+			inner: inner,
+			log:   logNon2xxV2,
+		}
+	}
 	return &githubClient{
 		client: gogithub.NewClient(httpClient),
 	}
