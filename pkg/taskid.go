@@ -28,8 +28,11 @@ var darkFactoryWatcherNamespace = uuid.MustParse("b1f4c2a9-7e63-4d81-9a05-3c8e0f
 // otherwise mint a new identifier and spawn a second agent run on the same branch.
 // Pinning the key for the whole queued phase makes those commits a controller no-op,
 // while the first publish for a PR that has never triggered still derives a key no
-// cursor entry holds, so the queued prompts finally run. Once the queue drains the
-// SHA returns to the key, and a force-push re-triggers as before.
+// cursor entry holds, so the queued prompts finally run.
+//
+// The key alone does not span the drained window — once the queue empties this
+// function returns the SHA-keyed identifier again, which the cursor never held.
+// Suppression across the drain comes from Cursor.QueuedMarkers, not from here.
 func DeriveTaskID(owner, repo string, number int, sha string, promptsQueued bool) uuid.UUID {
 	key := fmt.Sprintf("%s/%s#%d@%s", owner, repo, number, sha)
 	if promptsQueued {

@@ -41,8 +41,13 @@ skipped on a transient error, is absent from a batch and would otherwise lose it
 The marker therefore survives the drained window, so neither the commit that completes
 the last prompt nor the follow-up commit that marks the spec completed re-arms a run —
 those arrive separately, and the window spans more than one SHA, which a SHA-keyed
-dedup cannot span. It is dropped when the spec reaches completed (`no_spec_in_diff`) or
-the PR closes (`not_open`).
+dedup cannot span. It is dropped when a poll sees the spec reach completed
+(`no_spec_in_diff`), or in the narrow race where a PR closes between the search and
+the details fetch (`not_open`). A PR merged before either observation keeps its entry
+— the search is `is:pr is:open`, so a closed PR leaves the batch — which means the
+map grows by one small entry per PR that ever had a queued-phase publish. That is
+accepted: surviving a missing batch is what the field is for, and a pruning sweep
+would reintroduce the eviction bug it exists to fix.
 
 Three consequences follow, all deliberate:
 
@@ -51,8 +56,8 @@ Three consequences follow, all deliberate:
   salts the identifier through `DeriveTaskIDForce`.
 - **A force-push does not re-trigger while a PR is inside a queued phase** (queued or
   drained-but-not-completed). Again, `/trigger force: true` is the recovery route. A
-  force-push on a PR whose spec has completed re-triggers as before, via the normal
-  SHA-keyed path.
+  force-push is not a recovery route for a completed spec either: a completed spec
+  fails `specApprovedNotCompleted`, so the PR is no longer a candidate at any SHA.
 - **Deploying over a cursor from an earlier version publishes one task per in-flight
   PR whose prompts are queued.** The old watcher skipped those PRs, and a skipped PR
   is dropped from the rebuilt cursor, so there is no prior entry to dedup against. For

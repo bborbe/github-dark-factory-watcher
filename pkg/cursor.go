@@ -27,7 +27,17 @@ const DefaultCursorPath = "/data/cursor.json"
 // completion and the spec completion are separate commits) and any poll the PR is
 // missing from — a PR older than the search watermark, or one skipped on a
 // transient error, is absent from the batch and would otherwise lose its entry.
-// It is cleared when the spec reaches completed or the PR closes.
+// Entries are dropped when a poll sees the PR's spec reach completed
+// (no_spec_in_diff), or — in the narrow race where a PR closes between the search
+// and the details fetch — when a poll sees it no longer open (not_open).
+//
+// A PR merged before either observation is made keeps its entry: the search query
+// is `is:pr is:open`, so a closed PR leaves the batch and never reaches processPR
+// again. The map therefore grows by roughly one small entry per PR that ever had a
+// queued-phase publish, for the lifetime of the deployment — bounded by PR volume,
+// not reclaimed. That is accepted over a pruning sweep, because surviving a missing
+// batch is precisely what this field exists for; a sweep would reintroduce the
+// eviction bug it was added to fix.
 type Cursor struct {
 	LastUpdatedAt libtime.DateTime  `json:"last_updated_at"`
 	HeadSHAs      map[string]string `json:"head_shas"`
