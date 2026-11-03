@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.138.0, github.com/bborbe/cqrs to v0.6.15, github.com/bborbe/errors to v1.6.6, github.com/bborbe/http to v1.26.32, github.com/bborbe/kafka to v1.29.11, github.com/bborbe/kv to v1.21.28, github.com/bborbe/log to v1.7.6, github.com/bborbe/maintainer to v0.51.0, github.com/bborbe/run to v1.11.10, github.com/bborbe/sentry to v1.10.7, github.com/bborbe/service to v1.11.2, github.com/bborbe/time to v1.27.25, github.com/bborbe/validation to v1.5.8, github.com/onsi/ginkgo/v2 to v2.34.0
+
 ## v0.5.0
 
 - feat: log one `github non-2xx` line per non-2xx GitHub API response at the HTTP boundary, via a new `non2xxLoggingTransport` installed on the injected `*http.Client` in `NewGitHubClient` (no transport existed before). Each line carries `method`, `host`, `path`, `status`, `resource` (X-RateLimit-Resource), `remaining` (X-RateLimit-Remaining), `retry_after` and a body snippet truncated to 200 runes with `…`; a missing header or empty body is logged as the literal `absent`. Emitted at `glog.V(2)`, which the deployed `-v=2` shows. Without it a 429/403 cannot be split into primary-quota exhaustion and secondary rate limiting — go-github does not log at its HTTP boundary. The full URL and request headers are never logged; the response body is restored for the caller
