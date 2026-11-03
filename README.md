@@ -32,7 +32,19 @@ one, and a SHA-keyed identifier would mint a fresh task on every commit and spaw
 second agent run on the same branch. Pinning the key for the whole queued phase makes
 those commits a controller no-op, while a PR that has never triggered has no cursor
 entry, so its queued prompts finally run. Once the queue drains the SHA returns to the
-key and a force-push re-triggers as before.
+key again.
+
+The pinned key doubles as the PR's already-triggered marker. It stays in the cursor
+after the queue drains, so neither the commit that completes the last prompt nor the
+follow-up commit that marks the spec completed re-arms a second run — the two arrive
+separately, and the drained window spans more than one SHA. The marker is dropped
+when the spec reaches completed, since the PR then skips on `no_spec_in_diff` before
+the cursor is rebuilt. A force-push during the queued phase therefore does **not**
+re-trigger; `/trigger` with `force: true` is the recovery route.
+
+Deploying this over a cursor written by an earlier version needs no migration: such a
+cursor holds the SHA-keyed identifier for PRs already triggered, and the watcher
+detects that sibling entry and seeds the pinned marker instead of republishing.
 
 The cursor at `/data/cursor.json` (last-seen update time + `task_id → head_sha` map)
 is persisted between polls so a restart does not re-trigger every known PR, and a

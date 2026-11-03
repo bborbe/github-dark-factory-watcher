@@ -223,13 +223,15 @@ func (w *watcher) processPR(
 		return libtime.DateTime{}, false
 	}
 
-	taskIDStr := DeriveTaskID(
-		pr.Owner, pr.Repo, pr.Number, details.HeadSHA, result.PromptsQueued,
-	).String()
+	taskIDStr, queuedKey := taskIDsFor(pr, details.HeadSHA, result.PromptsQueued)
 	if _, exists := cursorState.HeadSHAs[taskIDStr]; exists {
 		glog.V(3).Infof("no change, skipping pr=%s/%s#%d sha=%s taskID=%s",
 			pr.Owner, pr.Repo, pr.Number, details.HeadSHA, taskIDStr)
 		newHeadSHAs[taskIDStr] = details.HeadSHA
+		return pr.UpdatedAt, true
+	}
+	if w.alreadyTriggered(cursorState, pr, details.HeadSHA, result.PromptsQueued) {
+		newHeadSHAs[queuedKey] = details.HeadSHA
 		return pr.UpdatedAt, true
 	}
 
@@ -239,6 +241,58 @@ func (w *watcher) processPR(
 		return pr.UpdatedAt, true
 	}
 	return libtime.DateTime{}, false
+}
+
+// taskIDsFor returns the identifier this poll will use for the PR, plus the pinned
+// queued identifier that doubles as the PR's already-triggered marker. They differ
+// only once the queue has drained: the first then falls back to the head SHA while
+// the second stays pinned.
+func taskIDsFor(pr PullRequest, headSHA string, promptsQueued bool) (taskIDStr, queuedKey string) {
+	queuedKey = DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, true).String()
+	taskIDStr = DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, promptsQueued).String()
+	return taskIDStr, queuedKey
+}
+
+// alreadyTriggered reports whether this PR has already been handed to an agent, in
+// either of the two shapes the cursor can hold it. True means "record the marker
+// and do not publish" — a second agent run on the same branch is the loop the
+// pinned key exists to prevent.
+//
+// The two shapes cover the two boundaries where the key flips:
+//
+//	drained: the commit completing the last prompt empties prompts/in-progress, so
+//	PromptsQueued flips false and the derived key becomes <pr>@<sha> — absent from
+//	the cursor, which held @queued. The follow-up commit that marks the spec
+//	completed arrives separately, so the drained window spans more than one SHA.
+//
+//	deploy: a cursor written before the pinned key existed holds <pr>@<sha> for a
+//	PR already triggered at this head. That PR now derives @queued, which such a
+//	cursor does not contain — without this check the first post-deploy poll would
+//	republish every in-flight PR.
+//
+// The marker is dropped naturally when the spec reaches completed: processPR
+// returns on no_spec_in_diff before rebuilding newHeadSHAs for that PR.
+func (w *watcher) alreadyTriggered(
+	cursorState *Cursor,
+	pr PullRequest,
+	headSHA string,
+	promptsQueued bool,
+) bool {
+	shaKey := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, false).String()
+	queuedKey := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, true).String()
+
+	crossKey, reason := queuedKey, "queue drained, not re-publishing"
+	if promptsQueued {
+		crossKey, reason = shaKey, "already triggered at this head, seeding queued marker"
+	}
+	if _, exists := cursorState.HeadSHAs[crossKey]; !exists {
+		return false
+	}
+	glog.V(2).Infof(
+		"%s pr=%s/%s#%d sha=%s key=%s",
+		reason, pr.Owner, pr.Repo, pr.Number, headSHA, crossKey,
+	)
+	return true
 }
 
 // publish builds and sends the CreateTaskCommand. Returns true on success.

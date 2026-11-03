@@ -110,11 +110,6 @@ func Evaluate(ctx context.Context, reader ContentReader, in Input) (Result, erro
 		return Result{}, errors.Wrapf(ctx, err, "get %s", darkFactoryConfigFile)
 	}
 
-	promptsQueued, err := hasInFlightPrompts(ctx, reader, in)
-	if err != nil {
-		return Result{}, errors.Wrap(ctx, err, "check in-flight prompts")
-	}
-
 	matched, err := matchedApprovedSpecsInDiff(ctx, reader, in)
 	if err != nil {
 		return Result{}, errors.Wrap(ctx, err, "check approved spec in diff")
@@ -122,15 +117,23 @@ func Evaluate(ctx context.Context, reader ContentReader, in Input) (Result, erro
 	if len(matched) == 0 {
 		return skip(ReasonNoSpecInDiff), nil
 	}
+
+	// Only consulted on the Keep path, and only to choose the task-identifier
+	// key, so it runs after the cheaper spec check — a PR skipped for
+	// no_spec_in_diff does not pay this extra ListDir.
+	promptsQueued, err := hasQueuedPrompts(ctx, reader, in)
+	if err != nil {
+		return Result{}, errors.Wrap(ctx, err, "check queued prompts")
+	}
 	return Result{Keep: true, MatchedSpecs: matched, PromptsQueued: promptsQueued}, nil
 }
 
-// hasInFlightPrompts reports whether any *.md remains under prompts/in-progress/
+// hasQueuedPrompts reports whether any *.md remains under prompts/in-progress/
 // at head — prompts approved and awaiting execution. True means "queued", NOT
 // "an executor is running": the watcher cannot observe executor state, so this
 // value only selects which task-identifier key DeriveTaskID uses. A missing
 // directory (404) counts as none.
-func hasInFlightPrompts(ctx context.Context, reader ContentReader, in Input) (bool, error) {
+func hasQueuedPrompts(ctx context.Context, reader ContentReader, in Input) (bool, error) {
 	entries, err := reader.ListDir(ctx, in.Owner, in.Repo, promptsDir, in.HeadSHA)
 	if err != nil {
 		if reader.IsNotFound(err) {

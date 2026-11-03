@@ -173,6 +173,143 @@ var _ = Describe("pkg.Watcher", func() {
 		})
 	})
 
+	// Queued prompts are the executor's inbox, not a veto — but the identifier is
+	// pinned while they are queued, and the pinned key doubles as the PR's
+	// "already triggered" marker. These four specs cover the key's whole life:
+	// the first publish, the agent's commits, the drain, and a cursor written
+	// before this change.
+	Describe("PR whose prompts are queued", func() {
+		queuedPrompt := []string{"prompts/in-progress/205-trial-ledger.md"}
+
+		It("publishes the pinned queued identifier", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+			_, cmd := createSender.SendCommandArgsForCall(0)
+			Expect(cmd.Frontmatter["task_identifier"]).To(Equal(
+				pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", true).String(),
+			))
+		})
+
+		It("dedups after the agent commits, even though the head SHA moved", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("does not re-publish when the queue drains", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// The last prompt moved to completed and the agent committed: the
+			// directory is empty and the head advanced. The @<sha> key was never in
+			// the cursor, so only the @queued marker stops a second run.
+			ghClient.ListDirReturns(nil, errNotFound)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("does not republish a PR a pre-change cursor already triggered at this head", func() {
+			// A cursor written before this change holds the SHA-keyed identifier.
+			// After the change the same PR derives @queued, which that cursor does
+			// not contain — without the sibling check the first post-deploy poll
+			// would publish a duplicate for a branch an agent is already working.
+			Expect(pkg.SaveCursor(ctx, cursorPath, pkg.Cursor{
+				LastUpdatedAt: startTime,
+				HeadSHAs: map[string]string{
+					pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false).String(): "abc123",
+				},
+			})).To(Succeed())
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(0))
+		})
+	})
+
 	Describe("Same (PR, SHA) on a second poll", func() {
 		It("publishes nothing the second time", func() {
 			configureCandidate(ghClient, candidatePR())
