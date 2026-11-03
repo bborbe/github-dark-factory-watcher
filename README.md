@@ -34,12 +34,15 @@ second agent run on the same branch. Pinning the key for the whole queued phase 
 those commits a controller no-op, while a PR that has never triggered has no cursor
 entry, so its queued prompts finally run.
 
-The pinned key doubles as the PR's already-triggered marker. It stays in the cursor
-after the queue drains, so neither the commit that completes the last prompt nor the
-follow-up commit that marks the spec completed re-arms a second run — the two arrive
-separately, and the drained window spans more than one SHA, which a SHA-keyed dedup
-cannot span. The marker is dropped when the spec reaches completed, since the PR then
-skips on `no_spec_in_diff` before the cursor is rebuilt.
+Publishing a queued PR also records an already-triggered marker in the cursor, keyed
+by `owner/repo#number` and held in its own field — deliberately **not** in the map that
+each poll rebuilds from the search batch, because a PR older than the watermark, or one
+skipped on a transient error, is absent from a batch and would otherwise lose its entry.
+The marker therefore survives the drained window, so neither the commit that completes
+the last prompt nor the follow-up commit that marks the spec completed re-arms a run —
+those arrive separately, and the window spans more than one SHA, which a SHA-keyed
+dedup cannot span. It is dropped when the spec reaches completed (`no_spec_in_diff`) or
+the PR closes (`not_open`).
 
 Three consequences follow, all deliberate:
 

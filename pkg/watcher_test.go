@@ -25,6 +25,10 @@ var errNotFound = stderrors.New("404 not found")
 
 const approvedSpecMD = "---\nstatus: verifying\napproved: \"2026-06-30T11:23:08Z\"\n---\n\n## Summary\n"
 
+// completedSpecMD is the same spec once dark-factory marks it completed — the
+// terminal state that ends a PR's queued phase and drops its marker.
+const completedSpecMD = "---\nstatus: completed\napproved: \"2026-06-30T11:23:08Z\"\ncompleted: \"2026-07-01T09:00:00Z\"\n---\n\n## Summary\n"
+
 func newTestWatcher(
 	ghClient pkg.GitHubClient,
 	createSender task.CreateCommandSender,
@@ -281,6 +285,123 @@ var _ = Describe("pkg.Watcher", func() {
 			)
 			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
 			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("keeps the marker when the PR misses a poll, so the drain still dedups", func() {
+			// The marker must not live in the per-poll rebuilt HeadSHAs map: a PR
+			// older than the search watermark, or one skipped on a transient error,
+			// is absent from a batch and would lose its entry — after which the
+			// drained commit publishes a second run with a fresh identifier.
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// A poll that returns no PRs at all.
+			ghClient.SearchPRsReturns(pkg.SearchResult{RateRemaining: 100}, nil)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+
+			// The PR is back, drained, at a newer head. Only the persisted marker
+			// can stop this publish.
+			ghClient.SearchPRsReturns(pkg.SearchResult{
+				PullRequests:  []pkg.PullRequest{candidatePR()},
+				RateRemaining: 100,
+			}, nil)
+			ghClient.ListDirReturns(nil, errNotFound)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w3 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w3.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("clears the marker once the spec completes, so a later batch can trigger", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// The spec reaches completed: the marker is dropped here, not on drain.
+			ghClient.GetContentStub = func(_ context.Context, _, _, filePath, _ string) ([]byte, error) {
+				switch filePath {
+				case ".dark-factory.yaml":
+					return []byte("release:\n  autoRelease: false\n"), nil
+				case "specs/in-progress/001-thing.md":
+					return []byte(completedSpecMD), nil
+				default:
+					return nil, errNotFound
+				}
+			}
+			ghClient.ListDirReturns(nil, errNotFound)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(fakeMetrics.IncFilterSkippedArgsForCall(0)).To(
+				Equal("no_spec_in_diff"))
+
+			// A fresh spec with queued prompts now triggers again.
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			createSender2.SendCommandReturns(nil)
+			w3 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w3.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(1))
 		})
 
 		It("does not re-trigger a second prompt batch queued after the drain", func() {

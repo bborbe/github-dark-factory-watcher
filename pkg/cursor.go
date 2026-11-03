@@ -19,9 +19,29 @@ import (
 const DefaultCursorPath = "/data/cursor.json"
 
 // Cursor holds the watcher's persisted poll state, including the last-seen update time and a map of task-identifier to head SHA for force-push detection.
+//
+// QueuedMarkers is deliberately NOT rebuilt from each poll's search batch, unlike
+// HeadSHAs. It records "this PR's queued phase has already been handed to an
+// agent", keyed by owner/repo#number rather than by any SHA, and it must outlive
+// both the drained window (which spans more than one SHA, since the prompt
+// completion and the spec completion are separate commits) and any poll the PR is
+// missing from — a PR older than the search watermark, or one skipped on a
+// transient error, is absent from the batch and would otherwise lose its entry.
+// It is cleared when the spec reaches completed or the PR closes.
 type Cursor struct {
 	LastUpdatedAt libtime.DateTime  `json:"last_updated_at"`
 	HeadSHAs      map[string]string `json:"head_shas"`
+	QueuedMarkers map[string]string `json:"queued_markers,omitempty"`
+}
+
+// newCursor returns an empty cursor whose maps are ready to write. Both maps must
+// be non-nil: processPR writes to them directly, and a nil map panics.
+func newCursor(startTime libtime.DateTime) Cursor {
+	return Cursor{
+		LastUpdatedAt: startTime,
+		HeadSHAs:      make(map[string]string),
+		QueuedMarkers: make(map[string]string),
+	}
 }
 
 // LoadCursor reads cursor state from path.
@@ -32,17 +52,20 @@ func LoadCursor(ctx context.Context, path string, startTime libtime.DateTime) (C
 		if os.IsNotExist(err) {
 			glog.V(2).
 				Infof("cursor file not found, using cold-start time=%s", startTime.Format(time.RFC3339))
-			return Cursor{LastUpdatedAt: startTime, HeadSHAs: make(map[string]string)}, nil
+			return newCursor(startTime), nil
 		}
 		return Cursor{}, errors.Wrap(ctx, err, "read cursor file")
 	}
 	var state Cursor
 	if err := json.Unmarshal(data, &state); err != nil {
 		glog.Warningf("cursor file corrupt, using cold-start path=%s err=%v", path, err)
-		return Cursor{LastUpdatedAt: startTime, HeadSHAs: make(map[string]string)}, nil
+		return newCursor(startTime), nil
 	}
 	if state.HeadSHAs == nil {
 		state.HeadSHAs = make(map[string]string)
+	}
+	if state.QueuedMarkers == nil {
+		state.QueuedMarkers = make(map[string]string)
 	}
 	return state, nil
 }

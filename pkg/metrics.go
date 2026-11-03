@@ -14,14 +14,20 @@ type Metrics interface {
 	// result: "success", "rate_limited", "github_error"
 	IncPollCycle(result string)
 	// IncPublished increments the published counter with the given status label.
-	// status: "create", "skipped", "error"
+	// status: "create", "create_queued", "skipped", "error"
+	// ("create_queued" is a publish for a PR whose prompts were queued — the trigger
+	// this watcher exists to restore — so the fix is distinguishable from the
+	// ordinary path on a dashboard)
 	IncPublished(status string)
 	// IncReposScanned increments the scanned-PR counter (sanity check on the scope filter).
 	IncReposScanned()
 	// IncFilterSkipped increments the filter-skipped counter with the given reason.
 	// reason: "out_of_scope", "details_error", "empty_sha", "not_draft", "not_open",
-	// "no_dark_factory_yaml", "no_spec_in_diff", "evaluate_error"
-	// ("prompts_in_flight" was retired: queued prompts trigger, they do not skip)
+	// "no_dark_factory_yaml", "no_spec_in_diff", "evaluate_error", "queued_marker"
+	// ("prompts_in_flight" was retired: queued prompts trigger, they do not skip.
+	//  "queued_marker" is not a candidate verdict — it counts the polls where a PR's
+	//  queued phase was already handed to an agent, i.e. the one-trigger-per-spec
+	//  suppression, so that limitation is visible rather than silent)
 	IncFilterSkipped(reason string)
 }
 
@@ -67,12 +73,12 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	for _, result := range []string{"success", "rate_limited", "github_error"} {
 		m.pollCyclesTotal.WithLabelValues(result).Add(0)
 	}
-	for _, status := range []string{"create", "skipped", "error"} {
+	for _, status := range []string{"create", "create_queued", "skipped", "error"} {
 		m.publishedTotal.WithLabelValues(status).Add(0)
 	}
 	for _, reason := range []string{
 		"out_of_scope", "details_error", "empty_sha", "not_draft", "not_open",
-		"no_dark_factory_yaml", "no_spec_in_diff", "evaluate_error",
+		"no_dark_factory_yaml", "no_spec_in_diff", "evaluate_error", "queued_marker",
 	} {
 		m.filterSkippedTotal.WithLabelValues(reason).Add(0)
 	}
