@@ -17,26 +17,58 @@ var _ = Describe("DeriveTaskID", func() {
 	var namespace = uuid.MustParse("b1f4c2a9-7e63-4d81-9a05-3c8e0f5a6d24")
 
 	It("is deterministic — same inputs always produce the same UUID", func() {
-		a := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a")
-		b := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a")
+		a := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a", false)
+		b := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a", false)
 		Expect(a).To(Equal(b))
 	})
 
 	It("produces different UUIDs for different owner/repo/number combos", func() {
-		a := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a")
-		Expect(a).NotTo(Equal(pkg.DeriveTaskID("bborbe", "widget", 43, "abc123def456789a")))
-		Expect(a).NotTo(Equal(pkg.DeriveTaskID("bborbe", "other", 42, "abc123def456789a")))
-		Expect(a).NotTo(Equal(pkg.DeriveTaskID("other", "widget", 42, "abc123def456789a")))
+		a := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a", false)
+		Expect(a).NotTo(Equal(pkg.DeriveTaskID("bborbe", "widget", 43, "abc123def456789a", false)))
+		Expect(a).NotTo(Equal(pkg.DeriveTaskID("bborbe", "other", 42, "abc123def456789a", false)))
+		Expect(a).NotTo(Equal(pkg.DeriveTaskID("other", "widget", 42, "abc123def456789a", false)))
 	})
 
 	It("produces different UUIDs for the same PR but different SHAs", func() {
-		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-aaa")).
-			NotTo(Equal(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-bbb")))
+		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-aaa", false)).
+			NotTo(Equal(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-bbb", false)))
 	})
 
 	It("produces the expected pinned UUID from the new namespace", func() {
 		expected := uuid.NewSHA1(namespace, []byte("bborbe/widget#42@abc123def456789a"))
-		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a")).To(Equal(expected))
+		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a", false)).
+			To(Equal(expected))
+	})
+})
+
+// The queued-prompt key is what stops the self-trigger loop: the agent's own
+// commits move prompts in-progress → completed, so the head SHA advances after
+// every prompt. Without this branch each advance mints a new identifier and the
+// controller spawns a second agent run on the same branch.
+var _ = Describe("DeriveTaskID with prompts queued", func() {
+	var namespace = uuid.MustParse("b1f4c2a9-7e63-4d81-9a05-3c8e0f5a6d24")
+
+	It("ignores the SHA — the agent's commits dedup while prompts are queued", func() {
+		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-aaa", true)).
+			To(Equal(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-bbb", true)))
+	})
+
+	It("still separates different PRs", func() {
+		a := pkg.DeriveTaskID("bborbe", "widget", 42, "sha-aaa", true)
+		Expect(a).NotTo(Equal(pkg.DeriveTaskID("bborbe", "widget", 43, "sha-aaa", true)))
+		Expect(a).NotTo(Equal(pkg.DeriveTaskID("bborbe", "other", 42, "sha-aaa", true)))
+		Expect(a).NotTo(Equal(pkg.DeriveTaskID("other", "widget", 42, "sha-aaa", true)))
+	})
+
+	It("differs from the drained key so the queue draining re-arms the SHA", func() {
+		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-aaa", true)).
+			NotTo(Equal(pkg.DeriveTaskID("bborbe", "widget", 42, "sha-aaa", false)))
+	})
+
+	It("produces the expected pinned UUID from the queued key format", func() {
+		expected := uuid.NewSHA1(namespace, []byte("bborbe/widget#42@queued"))
+		Expect(pkg.DeriveTaskID("bborbe", "widget", 42, "abc123def456789a", true)).
+			To(Equal(expected))
 	})
 })
 
@@ -50,7 +82,7 @@ var _ = Describe("DeriveTaskIDForce", func() {
 	})
 
 	It("differs from the canonical DeriveTaskID for the same (PR, SHA)", func() {
-		canonical := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123")
+		canonical := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false)
 		forced := pkg.DeriveTaskIDForce("bborbe", "widget", 42, "abc123", "1000")
 		Expect(forced).NotTo(Equal(canonical))
 	})

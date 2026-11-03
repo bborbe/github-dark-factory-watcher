@@ -217,35 +217,76 @@ func (w *watcher) processPR(
 		return libtime.DateTime{}, false
 	}
 	if !result.Keep {
+		// A completed spec, or a closed PR, ends the queued phase for good — drop
+		// the marker so it cannot outlive the work it describes.
+		if result.Reason == darkfactory.ReasonNoSpecInDiff ||
+			result.Reason == darkfactory.ReasonNotOpen {
+			delete(cursorState.QueuedMarkers, queuedMarkerKey(pr))
+		}
 		glog.V(3).
 			Infof("skipping pr=%s/%s#%d reason=%s", pr.Owner, pr.Repo, pr.Number, result.Reason)
 		w.metrics.IncFilterSkipped(result.Reason)
 		return libtime.DateTime{}, false
 	}
 
-	taskIDStr := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, details.HeadSHA).String()
+	taskIDStr, queuedKey := taskIDsFor(pr, details.HeadSHA, result.PromptsQueued)
 	if _, exists := cursorState.HeadSHAs[taskIDStr]; exists {
 		glog.V(3).Infof("no change, skipping pr=%s/%s#%d sha=%s taskID=%s",
 			pr.Owner, pr.Repo, pr.Number, details.HeadSHA, taskIDStr)
 		newHeadSHAs[taskIDStr] = details.HeadSHA
 		return pr.UpdatedAt, true
 	}
+	if _, marked := cursorState.QueuedMarkers[queuedMarkerKey(pr)]; marked {
+		glog.V(2).Infof("queued phase already triggered, not re-publishing pr=%s/%s#%d sha=%s",
+			pr.Owner, pr.Repo, pr.Number, details.HeadSHA)
+		w.metrics.IncFilterSkipped(ReasonQueuedMarker)
+		newHeadSHAs[taskIDStr] = details.HeadSHA
+		return pr.UpdatedAt, true
+	}
 
-	if w.publish(ctx, pr, details, taskIDStr, result.MatchedSpecs) {
+	if w.publish(ctx, pr, details, taskIDStr, result.MatchedSpecs, result.PromptsQueued) {
 		cursorState.HeadSHAs[taskIDStr] = details.HeadSHA
 		newHeadSHAs[taskIDStr] = details.HeadSHA
+		if result.PromptsQueued {
+			cursorState.QueuedMarkers[queuedMarkerKey(pr)] = queuedKey
+		}
 		return pr.UpdatedAt, true
 	}
 	return libtime.DateTime{}, false
 }
 
+// ReasonQueuedMarker is the IncFilterSkipped label for "this PR's queued phase was
+// already handed to an agent". Not a candidate verdict — the PR is a candidate; the
+// marker only stops a second run on the same branch.
+const ReasonQueuedMarker = "queued_marker"
+
+// queuedMarkerKey identifies a PR independently of its head SHA, so the marker
+// survives commits and polls that miss the PR.
+func queuedMarkerKey(pr PullRequest) string {
+	return fmt.Sprintf("%s/%s#%d", pr.Owner, pr.Repo, pr.Number)
+}
+
+// taskIDsFor returns the identifier this poll will use for the PR, plus the pinned
+// queued identifier. They differ once the queue has drained: the first then falls
+// back to the head SHA while the second stays pinned.
+func taskIDsFor(pr PullRequest, headSHA string, promptsQueued bool) (taskIDStr, queuedKey string) {
+	queuedKey = DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, true).String()
+	taskIDStr = DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, promptsQueued).String()
+	return taskIDStr, queuedKey
+}
+
 // publish builds and sends the CreateTaskCommand. Returns true on success.
+//
+// promptsQueued selects the published_total status so a queued-phase publish — the
+// trigger this watcher exists to restore — is distinguishable from the ordinary
+// one, which is what makes the fix observable on a dashboard.
 func (w *watcher) publish(
 	ctx context.Context,
 	pr PullRequest,
 	details PRDetails,
 	taskIDStr string,
 	matchedSpecs []string,
+	promptsQueued bool,
 ) bool {
 	cmd := BuildCreateCommand(pr, details, taskIDStr, w.cfg, matchedSpecs)
 	if err := w.createSender.SendCommand(ctx, cmd); err != nil {
@@ -259,10 +300,18 @@ func (w *watcher) publish(
 		w.metrics.IncPublished("error")
 		return false
 	}
-	glog.V(2).Infof("published CreateTaskCommand pr=%s/%s#%d sha=%s taskID=%s",
-		pr.Owner, pr.Repo, pr.Number, details.HeadSHA, taskIDStr)
-	w.metrics.IncPublished("create")
+	glog.V(2).Infof("published CreateTaskCommand pr=%s/%s#%d sha=%s taskID=%s queued=%v",
+		pr.Owner, pr.Repo, pr.Number, details.HeadSHA, taskIDStr, promptsQueued)
+	w.metrics.IncPublished(publishedStatus(promptsQueued))
 	return true
+}
+
+// publishedStatus maps a publish to its IncPublished label.
+func publishedStatus(promptsQueued bool) string {
+	if promptsQueued {
+		return "create_queued"
+	}
+	return "create"
 }
 
 // BuildCreateCommand builds the dark-factory-implement CreateTaskCommand for a

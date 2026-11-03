@@ -23,9 +23,11 @@ const darkFactoryConfigFile = ".dark-factory.yaml"
 // diff (see Evaluate).
 const specDir = "specs/in-progress"
 
-// promptsDir holds the agent's own in-flight prompts. Any *.md here at head is
-// a self-trigger signal: the agent's commits keep the spec approved-not-completed
-// while it works, so the watcher must not re-emit.
+// promptsDir holds the agent's own in-flight prompts. A *.md here at head means
+// prompts are approved and awaiting execution — the state the watcher must
+// TRIGGER on, not skip. Self-trigger suppression is carried by the task-identifier
+// key instead (see DeriveTaskID): while prompts are queued the key drops the head
+// SHA, so the agent's own commits dedup rather than minting a fresh task.
 const promptsDir = "prompts/in-progress"
 
 // Skip reason labels (also the IncFilterSkipped metric labels).
@@ -34,7 +36,6 @@ const (
 	ReasonNotOpen          = "not_open"
 	ReasonNoDarkFactoryYML = "no_dark_factory_yaml"
 	ReasonNoSpecInDiff     = "no_spec_in_diff"
-	ReasonPromptsInFlight  = "prompts_in_flight"
 )
 
 //counterfeiter:generate -o ../../mocks/content_reader.go --fake-name ContentReader . ContentReader
@@ -64,10 +65,16 @@ type Input struct {
 // Result is the keep/skip verdict. Reason is the metric label for a skip and is
 // empty when Keep is true. MatchedSpecs lists the approved-not-completed spec
 // paths that satisfied the diff check (populated only when Keep is true).
+//
+// PromptsQueued reports whether *.md files remain under prompts/in-progress/ at
+// head — prompts approved and awaiting execution. It never causes a skip; the
+// caller feeds it into DeriveTaskID, which drops the head SHA from the key while
+// prompts are queued so the agent's own commits dedup instead of re-triggering.
 type Result struct {
-	Keep         bool
-	Reason       string
-	MatchedSpecs []string
+	Keep          bool
+	Reason        string
+	MatchedSpecs  []string
+	PromptsQueued bool
 }
 
 func skip(reason string) Result { return Result{Keep: false, Reason: reason} }
@@ -78,8 +85,13 @@ func skip(reason string) Result { return Result{Keep: false, Reason: reason} }
 //	b. .dark-factory.yaml is present;
 //	c. at least one approved-not-completed spec under specs/in-progress/ is
 //	   touched by the PR diff (existence alone is NOT enough — specs persist
-//	   across their lifecycle);
-//	d. no *.md remains under prompts/in-progress/ (self-trigger suppression).
+//	   across their lifecycle).
+//
+// Queued prompts under prompts/in-progress/ are NOT a veto: they mean "approved,
+// awaiting execution", which is exactly the state that must trigger. The
+// self-trigger loop rule (d) used to guard against is prevented by the task
+// identifier instead (DeriveTaskID drops the head SHA while prompts are queued),
+// so the agent's own commits dedup rather than spawning a second run.
 //
 // A non-404 GitHub error is returned to the caller (cursor not advanced); a 404
 // on an expected-optional path is treated as "absent" and drives a skip verdict.
@@ -98,14 +110,6 @@ func Evaluate(ctx context.Context, reader ContentReader, in Input) (Result, erro
 		return Result{}, errors.Wrapf(ctx, err, "get %s", darkFactoryConfigFile)
 	}
 
-	inFlight, err := hasInFlightPrompts(ctx, reader, in)
-	if err != nil {
-		return Result{}, errors.Wrap(ctx, err, "check in-flight prompts")
-	}
-	if inFlight {
-		return skip(ReasonPromptsInFlight), nil
-	}
-
 	matched, err := matchedApprovedSpecsInDiff(ctx, reader, in)
 	if err != nil {
 		return Result{}, errors.Wrap(ctx, err, "check approved spec in diff")
@@ -113,12 +117,23 @@ func Evaluate(ctx context.Context, reader ContentReader, in Input) (Result, erro
 	if len(matched) == 0 {
 		return skip(ReasonNoSpecInDiff), nil
 	}
-	return Result{Keep: true, MatchedSpecs: matched}, nil
+
+	// Only consulted on the Keep path, and only to choose the task-identifier
+	// key, so it runs after the cheaper spec check — a PR skipped for
+	// no_spec_in_diff does not pay this extra ListDir.
+	promptsQueued, err := hasQueuedPrompts(ctx, reader, in)
+	if err != nil {
+		return Result{}, errors.Wrap(ctx, err, "check queued prompts")
+	}
+	return Result{Keep: true, MatchedSpecs: matched, PromptsQueued: promptsQueued}, nil
 }
 
-// hasInFlightPrompts reports whether any *.md remains under prompts/in-progress/
-// at head. A missing directory (404) counts as none.
-func hasInFlightPrompts(ctx context.Context, reader ContentReader, in Input) (bool, error) {
+// hasQueuedPrompts reports whether any *.md remains under prompts/in-progress/
+// at head — prompts approved and awaiting execution. True means "queued", NOT
+// "an executor is running": the watcher cannot observe executor state, so this
+// value only selects which task-identifier key DeriveTaskID uses. A missing
+// directory (404) counts as none.
+func hasQueuedPrompts(ctx context.Context, reader ContentReader, in Input) (bool, error) {
 	entries, err := reader.ListDir(ctx, in.Owner, in.Repo, promptsDir, in.HeadSHA)
 	if err != nil {
 		if reader.IsNotFound(err) {

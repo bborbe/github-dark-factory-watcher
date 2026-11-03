@@ -25,6 +25,10 @@ var errNotFound = stderrors.New("404 not found")
 
 const approvedSpecMD = "---\nstatus: verifying\napproved: \"2026-06-30T11:23:08Z\"\n---\n\n## Summary\n"
 
+// completedSpecMD is the same spec once dark-factory marks it completed — the
+// terminal state that ends a PR's queued phase and drops its marker.
+const completedSpecMD = "---\nstatus: completed\napproved: \"2026-06-30T11:23:08Z\"\ncompleted: \"2026-07-01T09:00:00Z\"\n---\n\n## Summary\n"
+
 func newTestWatcher(
 	ghClient pkg.GitHubClient,
 	createSender task.CreateCommandSender,
@@ -170,6 +174,301 @@ var _ = Describe("pkg.Watcher", func() {
 				cmd.Title,
 			).To(HavePrefix("Dark Factory Implement github - bborbe-widget - 42 - abc123"))
 			Expect(fakeMetrics.IncPublishedArgsForCall(0)).To(Equal("create"))
+		})
+	})
+
+	// Queued prompts are the executor's inbox, not a veto — but the identifier is
+	// pinned while they are queued, and the pinned key doubles as the PR's
+	// "already triggered" marker. These four specs cover the key's whole life:
+	// the first publish, the agent's commits, the drain, and a cursor written
+	// before this change.
+	Describe("PR whose prompts are queued", func() {
+		queuedPrompt := []string{"prompts/in-progress/205-trial-ledger.md"}
+
+		It("publishes the pinned queued identifier", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+			_, cmd := createSender.SendCommandArgsForCall(0)
+			Expect(cmd.Frontmatter["task_identifier"]).To(Equal(
+				pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", true).String(),
+			))
+		})
+
+		It("dedups after the agent commits, even though the head SHA moved", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("does not re-publish when the queue drains", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// The last prompt moved to completed and the agent committed: the
+			// directory is empty and the head advanced. The @<sha> key was never in
+			// the cursor, so only the @queued marker stops a second run.
+			ghClient.ListDirReturns(nil, errNotFound)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("keeps the marker when the PR misses a poll, so the drain still dedups", func() {
+			// The marker must not live in the per-poll rebuilt HeadSHAs map: a PR
+			// older than the search watermark, or one skipped on a transient error,
+			// is absent from a batch and would lose its entry — after which the
+			// drained commit publishes a second run with a fresh identifier.
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// A poll that returns no PRs at all.
+			ghClient.SearchPRsReturns(pkg.SearchResult{RateRemaining: 100}, nil)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+
+			// The PR is back, drained, at a newer head. Only the persisted marker
+			// can stop this publish.
+			ghClient.SearchPRsReturns(pkg.SearchResult{
+				PullRequests:  []pkg.PullRequest{candidatePR()},
+				RateRemaining: 100,
+			}, nil)
+			ghClient.ListDirReturns(nil, errNotFound)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w3 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w3.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+		})
+
+		It("clears the marker once the spec completes, so a later batch can trigger", func() {
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// The spec reaches completed: the marker is dropped here, not on drain.
+			ghClient.GetContentStub = func(_ context.Context, _, _, filePath, _ string) ([]byte, error) {
+				switch filePath {
+				case ".dark-factory.yaml":
+					return []byte("release:\n  autoRelease: false\n"), nil
+				case "specs/in-progress/001-thing.md":
+					return []byte(completedSpecMD), nil
+				default:
+					return nil, errNotFound
+				}
+			}
+			ghClient.ListDirReturns(nil, errNotFound)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(fakeMetrics.IncFilterSkippedArgsForCall(0)).To(
+				Equal("no_spec_in_diff"))
+
+			// A fresh spec with queued prompts now triggers again.
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			createSender2.SendCommandReturns(nil)
+			w3 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w3.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(1))
+		})
+
+		It("does not re-trigger a second prompt batch queued after the drain", func() {
+			// Documents the deliberate one-trigger-per-spec lifecycle: the marker
+			// survives the drain, so a later batch on the same still-approved spec
+			// is deduped. /trigger with force:true is the escape hatch. Asserting it
+			// here keeps the limitation pinned — if it is ever relaxed, this spec
+			// must change with the code.
+			configureCandidate(ghClient, candidatePR())
+			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
+
+			w := newTestWatcher(
+				ghClient,
+				createSender,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// Drained, head advanced.
+			ghClient.ListDirReturns(nil, errNotFound)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+
+			// A second batch queued at a newer head.
+			ghClient.ListDirReturns([]string{"prompts/in-progress/206-data-cache.md"}, nil)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "ghi789",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+			createSender3 := new(taskmocks.TaskCreateCommandSender)
+			w3 := newTestWatcher(
+				ghClient,
+				createSender3,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w3.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender3.SendCommandCallCount()).To(Equal(0),
+				"the marker is preserved until the spec completes; batch two needs force")
 		})
 	})
 
@@ -398,7 +697,7 @@ var _ = Describe("pkg.Watcher", func() {
 			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
 			Expect(fakeMetrics.IncPublishedArgsForCall(0)).To(Equal("error"))
 
-			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123").String()
+			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false).String()
 			cursor, err := pkg.LoadCursor(ctx, cursorPath, startTime)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cursor.HeadSHAs).NotTo(HaveKey(taskID))
@@ -418,7 +717,7 @@ var _ = Describe("pkg.Watcher", func() {
 				allowAll,
 			)
 			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
-			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123").String()
+			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false).String()
 			cursor, _ := pkg.LoadCursor(ctx, cursorPath, startTime)
 			Expect(cursor.HeadSHAs).To(HaveKey(taskID))
 

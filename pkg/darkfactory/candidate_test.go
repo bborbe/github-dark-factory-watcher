@@ -99,11 +99,25 @@ var _ = Describe("Evaluate", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
-	It("skips when prompts/in-progress still holds a *.md (self-trigger)", func() {
+	// A queued prompt is the executor's inbox — "approved, awaiting execution" —
+	// so it must keep the candidate, not veto it. Self-trigger suppression moved to
+	// the task identifier (DeriveTaskID drops the head SHA while PromptsQueued is
+	// true), which is where the loop is now broken. The old spec asserted the skip
+	// and was the reason a PR whose prompts were queued never ran.
+	It("keeps a PR whose prompts are queued, reporting PromptsQueued", func() {
 		reader.ListDirReturns([]string{"prompts/in-progress/001-feature.md"}, nil)
 		result, err := darkfactory.Evaluate(ctx, reader, in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.Reason).To(Equal(darkfactory.ReasonPromptsInFlight))
+		Expect(result.Keep).To(BeTrue())
+		Expect(result.PromptsQueued).To(BeTrue())
+	})
+
+	It("keeps a PR with no queued prompts, reporting PromptsQueued=false", func() {
+		reader.ListDirReturns(nil, errNotFound)
+		result, err := darkfactory.Evaluate(ctx, reader, in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Keep).To(BeTrue())
+		Expect(result.PromptsQueued).To(BeFalse())
 	})
 
 	It("skips when no spec under specs/in-progress is in the diff", func() {

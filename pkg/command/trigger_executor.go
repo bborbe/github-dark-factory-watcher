@@ -36,9 +36,15 @@ import (
 //   - success                                 → nil, nil, nil
 //
 // SendResultEnabled is false (fire-and-forget, no result topic). Outcomes are
-// counted on pkg.Metrics: IncPublished("create"/"error") on the publish path
-// and IncFilterSkipped(reason) on the non-candidate skip path (same labels the
-// poll-loop watcher uses).
+// counted on pkg.Metrics: IncPublished("create"/"create_queued"/"error") on the
+// publish path and IncFilterSkipped(reason) on the non-candidate skip path (same
+// labels the poll-loop watcher uses).
+//
+// This executor does NOT consult Cursor.QueuedMarkers — it has no cursor state. A
+// manual /trigger is therefore an explicit override: force=false during the
+// drained-but-not-completed window publishes a SHA-keyed run that the poll loop
+// would have suppressed via the marker. Controller dedup still covers the
+// still-queued case, because both paths derive the same pinned identifier.
 func NewTriggerCommandExecutor(
 	ghClient pkg.GitHubClient,
 	createSender task.CreateCommandSender,
@@ -191,7 +197,7 @@ func publishCreateCommand(
 		).String()
 	} else {
 		taskIDStr = pkg.DeriveTaskID(
-			prInfo.Owner, prInfo.Repo, prInfo.Number, details.HeadSHA,
+			prInfo.Owner, prInfo.Repo, prInfo.Number, details.HeadSHA, result.PromptsQueued,
 		).String()
 	}
 
@@ -203,10 +209,15 @@ func publishCreateCommand(
 		glog.Errorf("trigger executor: send create-task failed pr=%s err=%v", cmd.URL, err)
 		return nil, nil, errors.Wrapf(ctx, err, "send create task command for %s", cmd.URL)
 	}
-	metrics.IncPublished("create")
+	status := "create"
+	if result.PromptsQueued {
+		status = "create_queued"
+	}
+	metrics.IncPublished(status)
 	glog.V(2).Infof(
-		"trigger executor: published task_id=%s pr=%s/%s#%d sha=%s force=%v",
+		"trigger executor: published task_id=%s pr=%s/%s#%d sha=%s force=%v queued=%v",
 		taskIDStr, prInfo.Owner, prInfo.Repo, prInfo.Number, details.HeadSHA, cmd.Force,
+		result.PromptsQueued,
 	)
 	return nil, nil, nil
 }

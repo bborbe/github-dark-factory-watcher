@@ -297,7 +297,7 @@ var _ = Describe("force-true branch", func() {
 
 	// canonicalID is the (owner="bborbe", repo="repo", number=42, sha="abc123")
 	// canonical TaskIdentifier — the non-force path's expected output.
-	canonicalID := pkg.DeriveTaskID("bborbe", "repo", 42, "abc123").String()
+	canonicalID := pkg.DeriveTaskID("bborbe", "repo", 42, "abc123", false).String()
 
 	It("Force=true uses a salted identifier", func() {
 		captured := captureCreateCommand(
@@ -313,6 +313,19 @@ var _ = Describe("force-true branch", func() {
 		)
 		Expect(string(captured.TaskIdentifier)).To(Equal(canonicalID),
 			"Force=false must produce the canonical (owner, repo, number, sha)-derived identifier")
+	})
+
+	// The queued key is only useful if this path actually derives it: the executor
+	// is what a manual /trigger runs, and it must agree with the poll loop on the
+	// identifier or the two would publish different tasks for the same PR.
+	It("Force=false uses the pinned queued identifier when prompts are queued", func() {
+		ghClient.ListDirReturns([]string{"prompts/in-progress/205-trial-ledger.md"}, nil)
+		captured := captureCreateCommand(
+			command.TriggerCommand{URL: validPRURL, Force: false},
+		)
+		Expect(string(captured.TaskIdentifier)).To(Equal(
+			pkg.DeriveTaskID("bborbe", "repo", 42, "abc123", true).String(),
+		), "a queued prompt must pin the identifier so the agent's commits dedup")
 	})
 
 	It("Force=false produces the same CreateCommand as BuildCreateCommand", func() {
