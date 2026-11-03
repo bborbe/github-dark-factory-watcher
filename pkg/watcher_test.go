@@ -16,6 +16,7 @@ import (
 	"github.com/bborbe/github-dark-factory-watcher/mocks"
 	"github.com/bborbe/github-dark-factory-watcher/pkg"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/filter"
+	"github.com/bborbe/github-dark-factory-watcher/pkg/vaultmap"
 	libtime "github.com/bborbe/time"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -801,5 +802,56 @@ var _ = Describe("BuildCreateCommand", func() {
 		Expect(fm["branch"]).To(Equal("dark-factory/add-thing"))
 		Expect(cmd.Body).To(ContainSubstring("https://github.com/bborbe/widget/pull/7"))
 		Expect(cmd.Body).To(ContainSubstring("Approved specs in diff:** 1"))
+	})
+
+	DescribeTable("derives target_vault from the repo, not from the global value",
+		func(repo, expectedVault string) {
+			resolver, err := vaultmap.Parse(
+				context.Background(),
+				"github.com/bborbe/agent-task-executor=personal,github.com/bborbe/trading=trading",
+			)
+			Expect(err).To(BeNil())
+			pr := pkg.PullRequest{Number: 7, Owner: "bborbe", Repo: repo}
+			details := pkg.PRDetails{HeadSHA: "abcdef1234567890", State: "open", IsDraft: true}
+
+			cmd := pkg.BuildCreateCommand(
+				pr,
+				details,
+				"00000000-0000-0000-0000-000000000002",
+				pkg.TaskConfig{
+					Stage:         "prod",
+					MaxSlugLen:    pkg.DefaultMaxSlugLen,
+					MaxTitleLen:   pkg.DefaultMaxTitleLen,
+					TargetVault:   "global-ignored",
+					VaultResolver: resolver,
+				},
+				nil,
+			)
+
+			Expect(cmd.TargetVault).To(Equal(expectedVault))
+		},
+		Entry("personal-vault repo", "agent-task-executor", "personal"),
+		Entry("trading-vault repo", "trading", "trading"),
+		Entry("unmapped repo falls back to the legacy default", "maintainer", "openclaw"),
+	)
+
+	It("keeps the global target vault when no resolver is configured", func() {
+		pr := pkg.PullRequest{Number: 7, Owner: "bborbe", Repo: "widget"}
+		details := pkg.PRDetails{HeadSHA: "abcdef1234567890", State: "open", IsDraft: true}
+
+		cmd := pkg.BuildCreateCommand(
+			pr,
+			details,
+			"00000000-0000-0000-0000-000000000003",
+			pkg.TaskConfig{
+				Stage:       "prod",
+				MaxSlugLen:  pkg.DefaultMaxSlugLen,
+				MaxTitleLen: pkg.DefaultMaxTitleLen,
+				TargetVault: "agent",
+			},
+			nil,
+		)
+
+		Expect(cmd.TargetVault).To(Equal("agent"))
 	})
 })

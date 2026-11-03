@@ -13,6 +13,7 @@ import (
 	"github.com/bborbe/errors"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/darkfactory"
 	"github.com/bborbe/github-dark-factory-watcher/pkg/filter"
+	"github.com/bborbe/github-dark-factory-watcher/pkg/vaultmap"
 	libtime "github.com/bborbe/time"
 	"github.com/golang/glog"
 )
@@ -33,7 +34,11 @@ type TaskConfig struct {
 	// TargetVault routes the CreateTaskCommand to a specific vault controller
 	// (matched verbatim against the controller's VAULT_NAME). Empty leaves it
 	// unset so the controller's legacy default-vault fallback applies.
+	// VaultResolver, when set, takes precedence per repo.
 	TargetVault string
+	// VaultResolver derives the target vault from the repo the PR touches.
+	// Nil leaves TargetVault as the only routing input.
+	VaultResolver vaultmap.Resolver
 }
 
 // NewWatcher returns a Watcher that polls GitHub and publishes commands.
@@ -178,7 +183,7 @@ func (w *watcher) processPR(
 ) (libtime.DateTime, bool) {
 	w.metrics.IncReposScanned()
 
-	repoKey := "github.com/" + pr.Owner + "/" + pr.Repo
+	repoKey := repoKeyOf(pr)
 	if w.scopeFilter.Skip(filter.PR{RepoKey: repoKey}) {
 		glog.V(3).Infof("skipping pr=%s/%s#%d reason=out_of_scope", pr.Owner, pr.Repo, pr.Number)
 		w.metrics.IncFilterSkipped("out_of_scope")
@@ -335,11 +340,27 @@ func BuildCreateCommand(
 			cfg.MaxTitleLen,
 			cfg.TaskSuffix,
 		),
-		TargetVault:    cfg.TargetVault,
+		TargetVault:    targetVault(pr, cfg),
 		TaskIdentifier: agentlib.TaskIdentifier(taskIDStr),
 		Frontmatter:    buildFrontmatter(pr, details, taskIDStr, cfg.Stage),
 		Body:           buildTaskBody(pr, details, matchedSpecs),
 	}
+}
+
+// repoKeyOf returns the host-qualified key a repo-glob is matched against,
+// e.g. "github.com/bborbe/trading".
+func repoKeyOf(pr PullRequest) string {
+	return "github.com/" + pr.Owner + "/" + pr.Repo
+}
+
+// targetVault resolves the vault a CreateTaskCommand must target. A per-repo
+// resolver wins over the single global TargetVault; with neither set the field
+// stays empty and the controller's legacy default-vault fallback applies.
+func targetVault(pr PullRequest, cfg TaskConfig) string {
+	if cfg.VaultResolver != nil {
+		return cfg.VaultResolver.VaultFor(repoKeyOf(pr))
+	}
+	return cfg.TargetVault
 }
 
 func shortSHA(sha string) string {
