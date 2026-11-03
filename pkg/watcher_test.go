@@ -854,4 +854,24 @@ var _ = Describe("BuildCreateCommand", func() {
 
 		Expect(cmd.TargetVault).To(Equal("agent"))
 	})
+
+	It("leaves the field empty when neither a resolver nor a global vault is set", func() {
+		pr := pkg.PullRequest{Number: 7, Owner: "bborbe", Repo: "widget"}
+		details := pkg.PRDetails{HeadSHA: "abcdef1234567890", State: "open", IsDraft: true}
+
+		cmd := pkg.BuildCreateCommand(
+			pr,
+			details,
+			"00000000-0000-0000-0000-000000000004",
+			pkg.TaskConfig{
+				Stage:       "prod",
+				MaxSlugLen:  pkg.DefaultMaxSlugLen,
+				MaxTitleLen: pkg.DefaultMaxTitleLen,
+			},
+			nil,
+		)
+
+		Expect(cmd.TargetVault).To(Equal(""),
+			"the controller's legacy default must apply when nothing is configured")
+	})
 })

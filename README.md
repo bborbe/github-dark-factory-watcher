@@ -103,7 +103,7 @@ count). The agent's data source is the clone of the draft PR branch, not the bod
 | `REPO_ALLOWLIST` | no | — | Comma-separated host-qualified repo allowlist (`host/owner/repo`); empty means allow-all |
 | `BACKFILL_DURATION` | no | `720h` (30d) | On cold start, backdate the initial cursor by this; empty disables |
 | `TASK_SUFFIX` | no | — | Optional ` - <suffix>` appended to task filenames (per-stage disambiguator) |
-| `TARGET_VAULT` | no | — | Vault slug stamped on every command (matched against the controller's `VAULT_NAME`); overridden per repo by `REPO_VAULT_MAP` |
+| `TARGET_VAULT` | no | — | Vault slug stamped on every command (matched against the controller's `VAULT_NAME`). **Ignored once `REPO_VAULT_MAP` is set** — the map then decides every repo, and unmapped repos go to `openclaw` |
 | `REPO_VAULT_MAP` | no | — | Comma-separated `repo-glob=vault` entries; the first match sets the command's `target_vault`, unmapped repos fall back to `openclaw` |
 | `TOPIC_PREFIX` | no | — | Kafka topic prefix for CQRS topic construction (`develop`/`master`) |
 | `MAX_SLUG_LEN` | no | `80` | Max length of the slugified PR-title segment in vault filenames |

@@ -25,7 +25,8 @@ var _ = Describe("Parse", func() {
 		Expect(resolver).To(BeNil())
 	})
 
-	DescribeTable("rejects a malformed entry",
+	DescribeTable(
+		"rejects a malformed entry",
 		func(raw, expected string) {
 			resolver, err := vaultmap.Parse(context.Background(), raw)
 			Expect(err).NotTo(BeNil())
@@ -39,6 +40,16 @@ var _ = Describe("Parse", func() {
 		Entry("vault starting with a digit", "github.com/bborbe/foo=1personal", "must match"),
 		Entry("vault with a slash", "github.com/bborbe/foo=personal/x", "must match"),
 		Entry("negation", "!github.com/bborbe/foo=personal", "negation is not supported"),
+		Entry(
+			"glob without a host prefix",
+			"bborbe/trading=trading",
+			"validate repo-vault-map globs",
+		),
+		Entry(
+			"glob that is only an owner",
+			"github.com/bborbe=personal",
+			"validate repo-vault-map globs",
+		),
 	)
 })
 

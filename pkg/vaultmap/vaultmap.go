@@ -38,11 +38,13 @@ type Resolver interface {
 //
 // The value is a comma-separated list of repo-glob=vault entries. repo-glob
 // accepts the same wildcard syntax as REPO_ALLOWLIST (e.g.
-// "github.com/bborbe/*"). Entries are evaluated in order and the first match
-// wins, so a specific repo must be listed before a wildcard that also covers
-// it. Negation entries ("!repo") are rejected: a vault map has no sensible
-// meaning for "not this repo", and accepting one would make it match
-// everything.
+// "github.com/bborbe/*") and is validated by the same shape check, so a typo
+// such as a missing host prefix fails at startup instead of parsing cleanly,
+// never matching, and silently routing that repo to the default vault.
+// Entries are evaluated in order and the first match wins, so a specific repo
+// must be listed before a wildcard that also covers it. Negation entries
+// ("!repo") are rejected: a vault map has no sensible meaning for "not this
+// repo", and accepting one would make it match everything.
 //
 // An empty value returns (nil, nil): the command keeps its field empty and the
 // controller's legacy default applies, which is byte-identical to the
@@ -79,6 +81,13 @@ func Parse(ctx context.Context, raw string) (Resolver, error) {
 	}
 	if len(entries) == 0 {
 		return nil, nil
+	}
+	globs := make([]string, 0, len(entries))
+	for _, e := range entries {
+		globs = append(globs, e.glob)
+	}
+	if err := repoallowlist.Validate(ctx, globs); err != nil {
+		return nil, errors.Wrap(ctx, err, "validate repo-vault-map globs")
 	}
 	return &resolver{entries: entries}, nil
 }
