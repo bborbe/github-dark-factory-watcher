@@ -223,7 +223,9 @@ func (w *watcher) processPR(
 		return libtime.DateTime{}, false
 	}
 
-	taskIDStr := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, details.HeadSHA).String()
+	taskIDStr := DeriveTaskID(
+		pr.Owner, pr.Repo, pr.Number, details.HeadSHA, result.PromptsQueued,
+	).String()
 	if _, exists := cursorState.HeadSHAs[taskIDStr]; exists {
 		glog.V(3).Infof("no change, skipping pr=%s/%s#%d sha=%s taskID=%s",
 			pr.Owner, pr.Repo, pr.Number, details.HeadSHA, taskIDStr)

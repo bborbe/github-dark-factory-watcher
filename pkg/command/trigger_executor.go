@@ -191,7 +191,7 @@ func publishCreateCommand(
 		).String()
 	} else {
 		taskIDStr = pkg.DeriveTaskID(
-			prInfo.Owner, prInfo.Repo, prInfo.Number, details.HeadSHA,
+			prInfo.Owner, prInfo.Repo, prInfo.Number, details.HeadSHA, result.PromptsQueued,
 		).String()
 	}
 

@@ -18,11 +18,22 @@ candidate predicate. A PR is kept only when ALL hold at its head SHA:
    AND is approved-but-not-completed (frontmatter `approved:` set, `completed:` unset).
    The diff-scoping is essential — specs persist in `specs/in-progress/` across their
    whole lifecycle, so an existence-only check would false-trigger every unrelated draft PR;
-4. no `prompts/in-progress/*.md` remain at the head ref (self-trigger suppression —
-   the agent's own in-flight commits keep the spec approved-not-completed while it works).
+Queued prompts under `prompts/in-progress/*.md` are **not** a veto. They mean
+"approved, awaiting execution" — the executor's inbox — so a PR holding them is a
+candidate. Treating them as a self-trigger signal is what deadlocked every PR whose
+prompts were queued: nothing had run yet, and nothing ever would.
 
 For each kept PR it publishes a `dark-factory-implement` task keyed by a
-deterministic UUID5 `task_identifier` derived from `(owner, repo, number, head_sha)`.
+deterministic UUID5 `task_identifier` derived from `(owner, repo, number, head_sha)`
+— except while prompts are queued, where the key is `(owner, repo, number)` and the
+head SHA is dropped. That is what carries self-trigger suppression now: the agent's
+own commits move prompts `in-progress → completed`, advancing the head SHA after each
+one, and a SHA-keyed identifier would mint a fresh task on every commit and spawn a
+second agent run on the same branch. Pinning the key for the whole queued phase makes
+those commits a controller no-op, while a PR that has never triggered has no cursor
+entry, so its queued prompts finally run. Once the queue drains the SHA returns to the
+key and a force-push re-triggers as before.
+
 The cursor at `/data/cursor.json` (last-seen update time + `task_id → head_sha` map)
 is persisted between polls so a restart does not re-trigger every known PR, and a
 force-push (new head SHA) re-submits a fresh task.

@@ -20,7 +20,8 @@ type Metrics interface {
 	IncReposScanned()
 	// IncFilterSkipped increments the filter-skipped counter with the given reason.
 	// reason: "out_of_scope", "details_error", "empty_sha", "not_draft", "not_open",
-	// "no_dark_factory_yaml", "no_spec_in_diff", "prompts_in_flight", "evaluate_error"
+	// "no_dark_factory_yaml", "no_spec_in_diff", "evaluate_error"
+	// ("prompts_in_flight" was retired: queued prompts trigger, they do not skip)
 	IncFilterSkipped(reason string)
 }
 
@@ -71,7 +72,7 @@ func NewMetrics(registerer prometheus.Registerer) Metrics {
 	}
 	for _, reason := range []string{
 		"out_of_scope", "details_error", "empty_sha", "not_draft", "not_open",
-		"no_dark_factory_yaml", "no_spec_in_diff", "prompts_in_flight", "evaluate_error",
+		"no_dark_factory_yaml", "no_spec_in_diff", "evaluate_error",
 	} {
 		m.filterSkippedTotal.WithLabelValues(reason).Add(0)
 	}

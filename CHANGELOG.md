@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- fix: stop vetoing a PR whose prompts are queued. `Evaluate` no longer skips on `prompts/in-progress/*.md`; a queued prompt is the executor's inbox ("approved, awaiting execution"), so it now keeps the candidate and reports `Result.PromptsQueued` instead. That veto deadlocked every PR whose prompts were queued — nothing had run, and nothing ever would. Self-trigger suppression moves to the task identifier: `DeriveTaskID` gains a `promptsQueued` parameter and drops the head SHA from the key while prompts are queued (`<owner>/<repo>#<n>@queued`), so the agent's own in-progress → completed commits dedup instead of minting a fresh task per commit and spawning a second agent run on the same branch. A PR that has never triggered holds no cursor entry, so its queued prompts publish; once the queue drains the SHA returns to the key and force-push re-triggers as before. `ReasonPromptsInFlight` and the `prompts_in_flight` metric label are retired.
+
 ## v0.5.1
 
 - chore: update github.com/bborbe/agent to v0.138.0, github.com/bborbe/cqrs to v0.6.15, github.com/bborbe/errors to v1.6.6, github.com/bborbe/http to v1.26.32, github.com/bborbe/kafka to v1.29.11, github.com/bborbe/kv to v1.21.28, github.com/bborbe/log to v1.7.6, github.com/bborbe/maintainer to v0.51.0, github.com/bborbe/run to v1.11.10, github.com/bborbe/sentry to v1.10.7, github.com/bborbe/service to v1.11.2, github.com/bborbe/time to v1.27.25, github.com/bborbe/validation to v1.5.8, github.com/onsi/ginkgo/v2 to v2.34.0

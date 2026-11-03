@@ -297,7 +297,7 @@ var _ = Describe("force-true branch", func() {
 
 	// canonicalID is the (owner="bborbe", repo="repo", number=42, sha="abc123")
 	// canonical TaskIdentifier — the non-force path's expected output.
-	canonicalID := pkg.DeriveTaskID("bborbe", "repo", 42, "abc123").String()
+	canonicalID := pkg.DeriveTaskID("bborbe", "repo", 42, "abc123", false).String()
 
 	It("Force=true uses a salted identifier", func() {
 		captured := captureCreateCommand(

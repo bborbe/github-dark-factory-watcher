@@ -398,7 +398,7 @@ var _ = Describe("pkg.Watcher", func() {
 			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
 			Expect(fakeMetrics.IncPublishedArgsForCall(0)).To(Equal("error"))
 
-			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123").String()
+			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false).String()
 			cursor, err := pkg.LoadCursor(ctx, cursorPath, startTime)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cursor.HeadSHAs).NotTo(HaveKey(taskID))
@@ -418,7 +418,7 @@ var _ = Describe("pkg.Watcher", func() {
 				allowAll,
 			)
 			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
-			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123").String()
+			taskID := pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false).String()
 			cursor, _ := pkg.LoadCursor(ctx, cursorPath, startTime)
 			Expect(cursor.HeadSHAs).To(HaveKey(taskID))
 
