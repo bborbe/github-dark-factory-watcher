@@ -230,7 +230,7 @@ func (w *watcher) processPR(
 		newHeadSHAs[taskIDStr] = details.HeadSHA
 		return pr.UpdatedAt, true
 	}
-	if w.alreadyTriggered(cursorState, pr, details.HeadSHA, result.PromptsQueued) {
+	if w.alreadyTriggered(cursorState, pr, details.HeadSHA) {
 		newHeadSHAs[queuedKey] = details.HeadSHA
 		return pr.UpdatedAt, true
 	}
@@ -253,45 +253,33 @@ func taskIDsFor(pr PullRequest, headSHA string, promptsQueued bool) (taskIDStr, 
 	return taskIDStr, queuedKey
 }
 
-// alreadyTriggered reports whether this PR has already been handed to an agent, in
-// either of the two shapes the cursor can hold it. True means "record the marker
-// and do not publish" — a second agent run on the same branch is the loop the
-// pinned key exists to prevent.
+// alreadyTriggered reports whether this PR is inside a queued phase that has
+// already been handed to an agent. True means "keep the marker and do not
+// publish" — a second agent run on the same branch is the loop the pinned key
+// exists to prevent.
 //
-// The two shapes cover the two boundaries where the key flips:
+// The pinned key doubles as the marker: it is written when the queued PR is
+// published and survives the drain, so neither the commit that completes the
+// last prompt nor the follow-up commit that marks the spec completed re-arms a
+// run — those arrive separately, so the drained window spans more than one SHA
+// and a SHA-keyed dedup cannot span it.
 //
-//	drained: the commit completing the last prompt empties prompts/in-progress, so
-//	PromptsQueued flips false and the derived key becomes <pr>@<sha> — absent from
-//	the cursor, which held @queued. The follow-up commit that marks the spec
-//	completed arrives separately, so the drained window spans more than one SHA.
-//
-//	deploy: a cursor written before the pinned key existed holds <pr>@<sha> for a
-//	PR already triggered at this head. That PR now derives @queued, which such a
-//	cursor does not contain — without this check the first post-deploy poll would
-//	republish every in-flight PR.
-//
-// The marker is dropped naturally when the spec reaches completed: processPR
-// returns on no_spec_in_diff before rebuilding newHeadSHAs for that PR.
+// It is dropped when the spec reaches completed: processPR returns on
+// no_spec_in_diff before rebuilding newHeadSHAs for that PR. The consequence is
+// one trigger per PR per spec lifecycle — a second prompt batch queued after the
+// drain needs /trigger with force:true, which salts the identifier via
+// DeriveTaskIDForce.
 func (w *watcher) alreadyTriggered(
 	cursorState *Cursor,
 	pr PullRequest,
 	headSHA string,
-	promptsQueued bool,
 ) bool {
-	shaKey := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, false).String()
-	queuedKey := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, true).String()
-
-	crossKey, reason := queuedKey, "queue drained, not re-publishing"
-	if promptsQueued {
-		crossKey, reason = shaKey, "already triggered at this head, seeding queued marker"
-	}
-	if _, exists := cursorState.HeadSHAs[crossKey]; !exists {
+	marker := DeriveTaskID(pr.Owner, pr.Repo, pr.Number, headSHA, true).String()
+	if _, exists := cursorState.HeadSHAs[marker]; !exists {
 		return false
 	}
-	glog.V(2).Infof(
-		"%s pr=%s/%s#%d sha=%s key=%s",
-		reason, pr.Owner, pr.Repo, pr.Number, headSHA, crossKey,
-	)
+	glog.V(2).Infof("queued phase already triggered, not re-publishing pr=%s/%s#%d sha=%s",
+		pr.Owner, pr.Repo, pr.Number, headSHA)
 	return true
 }
 

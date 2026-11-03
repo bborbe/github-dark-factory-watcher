@@ -17,7 +17,8 @@ candidate predicate. A PR is kept only when ALL hold at its head SHA:
 3. at least one spec under `specs/in-progress/*.md` is **touched by the PR diff**
    AND is approved-but-not-completed (frontmatter `approved:` set, `completed:` unset).
    The diff-scoping is essential — specs persist in `specs/in-progress/` across their
-   whole lifecycle, so an existence-only check would false-trigger every unrelated draft PR;
+   whole lifecycle, so an existence-only check would false-trigger every unrelated draft PR.
+
 Queued prompts under `prompts/in-progress/*.md` are **not** a veto. They mean
 "approved, awaiting execution" — the executor's inbox — so a PR holding them is a
 candidate. Treating them as a self-trigger signal is what deadlocked every PR whose
@@ -31,24 +32,33 @@ own commits move prompts `in-progress → completed`, advancing the head SHA aft
 one, and a SHA-keyed identifier would mint a fresh task on every commit and spawn a
 second agent run on the same branch. Pinning the key for the whole queued phase makes
 those commits a controller no-op, while a PR that has never triggered has no cursor
-entry, so its queued prompts finally run. Once the queue drains the SHA returns to the
-key again.
+entry, so its queued prompts finally run.
 
 The pinned key doubles as the PR's already-triggered marker. It stays in the cursor
 after the queue drains, so neither the commit that completes the last prompt nor the
 follow-up commit that marks the spec completed re-arms a second run — the two arrive
-separately, and the drained window spans more than one SHA. The marker is dropped
-when the spec reaches completed, since the PR then skips on `no_spec_in_diff` before
-the cursor is rebuilt. A force-push during the queued phase therefore does **not**
-re-trigger; `/trigger` with `force: true` is the recovery route.
+separately, and the drained window spans more than one SHA, which a SHA-keyed dedup
+cannot span. The marker is dropped when the spec reaches completed, since the PR then
+skips on `no_spec_in_diff` before the cursor is rebuilt.
 
-Deploying this over a cursor written by an earlier version needs no migration: such a
-cursor holds the SHA-keyed identifier for PRs already triggered, and the watcher
-detects that sibling entry and seeds the pinned marker instead of republishing.
+Three consequences follow, all deliberate:
+
+- **One trigger per PR per spec lifecycle.** A second prompt batch queued after the
+  drain is deduped by the preserved marker. Use `/trigger` with `force: true`, which
+  salts the identifier through `DeriveTaskIDForce`.
+- **A force-push does not re-trigger while a PR is inside a queued phase** (queued or
+  drained-but-not-completed). Again, `/trigger force: true` is the recovery route. A
+  force-push on a PR whose spec has completed re-triggers as before, via the normal
+  SHA-keyed path.
+- **Deploying over a cursor from an earlier version publishes one task per in-flight
+  PR whose prompts are queued.** The old watcher skipped those PRs, and a skipped PR
+  is dropped from the rebuilt cursor, so there is no prior entry to dedup against. For
+  a PR that is genuinely deadlocked that is the intended effect; for one an agent is
+  already working it produces a duplicate run. Drain in-flight PRs before deploying if
+  that matters.
 
 The cursor at `/data/cursor.json` (last-seen update time + `task_id → head_sha` map)
-is persisted between polls so a restart does not re-trigger every known PR, and a
-force-push (new head SHA) re-submits a fresh task.
+is persisted between polls so a restart does not re-trigger every known PR.
 
 ## Emitted Task Contract
 

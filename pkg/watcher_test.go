@@ -283,19 +283,15 @@ var _ = Describe("pkg.Watcher", func() {
 			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
 		})
 
-		It("does not republish a PR a pre-change cursor already triggered at this head", func() {
-			// A cursor written before this change holds the SHA-keyed identifier.
-			// After the change the same PR derives @queued, which that cursor does
-			// not contain — without the sibling check the first post-deploy poll
-			// would publish a duplicate for a branch an agent is already working.
-			Expect(pkg.SaveCursor(ctx, cursorPath, pkg.Cursor{
-				LastUpdatedAt: startTime,
-				HeadSHAs: map[string]string{
-					pkg.DeriveTaskID("bborbe", "widget", 42, "abc123", false).String(): "abc123",
-				},
-			})).To(Succeed())
+		It("does not re-trigger a second prompt batch queued after the drain", func() {
+			// Documents the deliberate one-trigger-per-spec lifecycle: the marker
+			// survives the drain, so a later batch on the same still-approved spec
+			// is deduped. /trigger with force:true is the escape hatch. Asserting it
+			// here keeps the limitation pinned — if it is ever relaxed, this spec
+			// must change with the code.
 			configureCandidate(ghClient, candidatePR())
 			ghClient.ListDirReturns(queuedPrompt, nil)
+			createSender.SendCommandReturns(nil)
 
 			w := newTestWatcher(
 				ghClient,
@@ -306,7 +302,52 @@ var _ = Describe("pkg.Watcher", func() {
 				allowAll,
 			)
 			Expect(w.Poll(ctx)).NotTo(HaveOccurred())
-			Expect(createSender.SendCommandCallCount()).To(Equal(0))
+			Expect(createSender.SendCommandCallCount()).To(Equal(1))
+
+			// Drained, head advanced.
+			ghClient.ListDirReturns(nil, errNotFound)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "def456",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+			createSender2 := new(taskmocks.TaskCreateCommandSender)
+			w2 := newTestWatcher(
+				ghClient,
+				createSender2,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w2.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender2.SendCommandCallCount()).To(Equal(0))
+
+			// A second batch queued at a newer head.
+			ghClient.ListDirReturns([]string{"prompts/in-progress/206-data-cache.md"}, nil)
+			ghClient.GetPRDetailsReturns(pkg.PRDetails{
+				HeadSHA:  "ghi789",
+				CloneURL: "https://github.com/bborbe/widget.git",
+				Branch:   "dark-factory/thing",
+				State:    "open",
+				IsDraft:  true,
+				Title:    "feat: thing",
+			}, nil)
+			createSender3 := new(taskmocks.TaskCreateCommandSender)
+			w3 := newTestWatcher(
+				ghClient,
+				createSender3,
+				cursorPath,
+				startTime,
+				fakeMetrics,
+				allowAll,
+			)
+			Expect(w3.Poll(ctx)).NotTo(HaveOccurred())
+			Expect(createSender3.SendCommandCallCount()).To(Equal(0),
+				"the marker is preserved until the spec completes; batch two needs force")
 		})
 	})
 
