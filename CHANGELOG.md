@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.6.0
 
 - feat: derive `target_vault` per repo from a new `REPO_VAULT_MAP` (`repo-glob=vault`, first match wins, unmapped repos fall back to `openclaw`), so a personal- or trading-vault PR is no longer claimed by the openclaw controller and skipped by its own
 
