@@ -103,7 +103,8 @@ count). The agent's data source is the clone of the draft PR branch, not the bod
 | `REPO_ALLOWLIST` | no | — | Comma-separated host-qualified repo allowlist (`host/owner/repo`); empty means allow-all |
 | `BACKFILL_DURATION` | no | `720h` (30d) | On cold start, backdate the initial cursor by this; empty disables |
 | `TASK_SUFFIX` | no | — | Optional ` - <suffix>` appended to task filenames (per-stage disambiguator) |
-| `TARGET_VAULT` | no | — | Vault slug stamped on every command (matched against the controller's `VAULT_NAME`) |
+| `TARGET_VAULT` | no | — | Vault slug stamped on every command (matched against the controller's `VAULT_NAME`). **Ignored once `REPO_VAULT_MAP` is set** — the map then decides every repo, and unmapped repos go to `openclaw` |
+| `REPO_VAULT_MAP` | no | — | Comma-separated `repo-glob=vault` entries; the first match sets the command's `target_vault`, unmapped repos fall back to `openclaw` |
 | `TOPIC_PREFIX` | no | — | Kafka topic prefix for CQRS topic construction (`develop`/`master`) |
 | `MAX_SLUG_LEN` | no | `80` | Max length of the slugified PR-title segment in vault filenames |
 | `MAX_TITLE_LEN` | no | `200` | Max length of the whole vault task filename (safety cap) |
@@ -114,6 +115,26 @@ count). The agent's data source is the clone of the draft PR branch, not the bod
 Entries are comma-separated. A leading `!` marks an exclusion. A target is allowed iff
 `(includes is empty OR any include matches) AND (no exclude matches)`; excludes always
 override includes. Wildcards (`github.com/bborbe/*`) are supported.
+
+### `REPO_VAULT_MAP` syntax
+
+Entries are comma-separated `repo-glob=vault` pairs, matched against the same
+host-qualified key as `REPO_ALLOWLIST` (`github.com/<owner>/<repo>`), with the same
+wildcard support. **The first matching entry wins**, so list specific repos before a
+wildcard that also covers them. An unmapped repo falls back to `openclaw` — the
+controller's legacy default — so a map that omits a repo routes exactly as it did
+before the map existed. Negation entries are rejected: a vault map has no sensible
+meaning for "not this repo". An empty value disables the map entirely and leaves
+`target_vault` unset.
+
+```yaml
+REPO_VAULT_MAP: "github.com/bborbe/agent-task-executor=personal,github.com/bborbe/trading=trading,github.com/bborbe/*=openclaw"
+```
+
+A single global `TARGET_VAULT` cannot serve a fleet whose repos belong to different
+vaults: the controller resolves an empty target to `openclaw` and skips every other
+vault as a cross-vault mismatch, so a personal-vault PR is claimed by the openclaw
+controller and its own controller never sees it.
 
 ## HTTP Endpoints
 
