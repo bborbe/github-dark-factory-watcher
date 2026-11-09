@@ -1,9 +1,10 @@
 ---
-status: verifying
+status: completed
 approved: "2026-11-09T07:52:25Z"
 generating: "2026-11-09T11:36:01Z"
 prompted: "2026-11-09T11:42:21Z"
 verifying: "2026-11-09T11:43:01Z"
+completed: "2026-11-09T11:57:33Z"
 branch: feat/cluster-build-arm
 ---
 
