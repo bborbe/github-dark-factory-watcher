@@ -163,6 +163,46 @@ make generate      # regenerate counterfeiter mocks
 make precommit     # format + lint + test + security checks
 ```
 
+## Build + Deploy
+
+`make build` has two arms, selected by `BUILD_TARGET`.
+
+The local arm is the default. It builds the image on this machine and tags
+`docker.io/bborbe/github-dark-factory-watcher:<tag>`:
+
+```bash
+make build
+```
+
+The cluster arm builds a named commit as a Kubernetes Job and pushes the same
+repository:
+
+```bash
+make build BUILD_TARGET=<cluster> REF=<sha> VERSION=<tag>
+```
+
+`<cluster>` is one of the `hack/cluster-alias.sh` aliases (`sun`, `nukedev`,
+`nukeprod`) or a kubectl context. `VERSION` is required on the cluster arm — a
+tag nobody chose is never pushed. `REF` must be a full 40-character SHA that
+exists on `origin`, because the Job clones the repository.
+
+Both arms compose `docker.io/bborbe/github-dark-factory-watcher` from the same
+`DOCKER_REGISTRY` and `SERVICE` variables, so the two cannot drift. `buca`
+stays local-only: it builds, pushes and removes an image on this machine and is
+refused for a cluster `BUILD_TARGET`.
+
+`hack/` holds the copied build runner. It is not maintained here:
+
+- `build-cluster.sh`, `cluster-alias.sh` and `build-job.yaml` are copied from
+  [`bborbe/agent-task-executor`](https://github.com/bborbe/agent-task-executor)
+  at `91a7e64e160f30be8af0aea64635e1e11bc86731`.
+- `build-cluster-bootstrap.sh` and `dockerconfig.json.tpl` are copied from
+  [`bborbe/go-skeleton`](https://github.com/bborbe/go-skeleton) at
+  `eb050aa20bb6194d8af7e47baf8880df789bd1ca`.
+
+Treat a local edit to those files as drift: re-copy from the pinned commits
+instead of patching them in place.
+
 ## License
 
 BSD 2-Clause License. See [LICENSE](LICENSE).

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- feat: Add a cluster build arm to `make build`, selected by `BUILD_TARGET` (default `local`); the cluster arm prints the composed image reference and runs `hack/build-cluster.sh`, requires a caller-supplied `VERSION`, and refuses the local-only `upload`, `clean` and `buca` goals at parse time
+- feat: Add the pinned `hack/` build-runner files (`build-cluster.sh`, `cluster-alias.sh`, `build-job.yaml`, `build-cluster-bootstrap.sh`, `dockerconfig.json.tpl`) the cluster arm invokes, copied byte-identical from their pinned upstream commits, and switch the shared `Dockerfile` from `-mod=vendor` to `-mod=mod` so an image builds from a fresh clone with no `vendor/` directory
+
 ## v0.6.2
 
 - chore: restate the do-not-merge contract in the gate workflow
