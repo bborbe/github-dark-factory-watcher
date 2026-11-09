@@ -10,7 +10,7 @@ branch: dark-factory/cluster-build-arm
 - Its siblings already build their image inside a Kubernetes cluster, unattended, from any committed ref.
 - Add that second build path here as an arm beside the existing local one, leaving the local command and tag as they are.
 - The cluster arm builds a named commit as a Kubernetes Job and pushes the result to the same Docker Hub repository the local arm already tags, so a release no longer needs this machine.
-- Two supporting edits make the arm reachable: the image must build from a fresh clone, which ships without its vendored dependency tree; and the repo must carry the dark-factory directory layout, which it has none of today and which lands first.
+- Two supporting edits make the arm reachable: the image must build from a fresh clone, which ships without its vendored dependency tree; and the repo must carry the dark-factory directory layout, which it has none of today and which this PR adds directly because no generated prompt can.
 
 ## Problem
 
@@ -22,7 +22,7 @@ The arm is not a straight copy. Four properties of this repo change what has to 
 - **`build` is chained to a version guard.** `Makefile.docker:8` reads `build: check-version-tag check-go-mod`, and `check-version-tag` exits 1 unless HEAD's exact tag equals `$(VERSION)`. A scratch-tag cluster build dies at that guard before any Job is created. The guard must be wrapped for the local arm only, and must keep firing for a bare local build.
 - **The image build resolves dependencies from `vendor/`.** `Dockerfile:7` runs `go build -mod=vendor`, and `.gitignore` excludes `/vendor/`, so a fresh clone has no such directory and the build fails before it starts. The Job clones; it does not see a developer's working tree.
 - **`VERSION` has a file default, not a caller contract.** `Makefile.docker:3-5` assigns `VERSION` from the latest tag when the caller sets none. The cluster arm must refuse that value, because a tag nobody chose must never be pushed. The guard belongs after that assignment and must reject `$(origin VERSION)` values `file` and `undefined`.
-- **The repo has none of the directories the prompt lifecycle writes into.** Git creates a directory in a clone only for a path it tracks, so `specs/in-progress/` exists (this spec is tracked there) while `prompts/`, `prompts/in-progress/`, `prompts/completed/` and `specs/completed/` have no tracked file at all, and no `.keep` exists anywhere. Measured on this PR's first implement run (task `43694d77`, 2026-11-09): the agent generated and executed prompt 1, then died at `save prompt metadata: write file: open prompts/in-progress/001-spec-001-makefile-dispatch.md: no such file or directory`. This is the repo-hygiene half of the arm and it is a hard prerequisite, not polish — and because the metadata write happens at the end of prompt 1, the hygiene work has to land *before* any prompt runs.
+- **The repo has none of the directories the prompt lifecycle writes into.** Git creates a directory in a clone only for a path it tracks, so `specs/in-progress/` exists (this spec is tracked there) while `prompts/`, `prompts/in-progress/`, `prompts/completed/` and `specs/completed/` have no tracked file at all, and no `.keep` exists anywhere. Measured twice on 2026-11-09: the first implement run (task `43694d77`) generated and executed prompt 1, then died at `save prompt metadata: write file: open prompts/in-progress/001-spec-001-makefile-dispatch.md: no such file or directory`; the second run (task `adfa6564`) died at the *same* call for the hygiene prompt that was meant to fix it. The metadata write happens at the end of a prompt, so **no generated prompt can create the directory it writes into** — the layout has to be in the tree before the lifecycle's first prompt. This PR adds it directly for that reason.
 
 ## Goal
 
@@ -164,12 +164,13 @@ Prompts should be generated in this order — each row is a single prompt with a
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
-| 1 | Repo hygiene: the six `.keep` files and the six `.gitignore` entries — **must run first**, because prompt 1's own metadata write needs `prompts/in-progress/` to exist | 8 | 7 | — |
-| 2 | `Makefile.docker` dispatch: the `BUILD_TARGET` split, the caller-supplied `VERSION` guard, the composed-reference echo, local-only `upload`/`clean`/`buca`, and narrowing `check-version-tag` / `check-go-mod` to the local arm | 1, 2, 3, 4, 5 | 1, 3, 5, 8 | prompt 1 |
-| 3 | The build path itself: the five `hack/` files and the module-mode image build | 2, 6 | 2, 4 | prompt 2 (the dispatch calls the runner) |
-| 4 | Docs: the README build section and the CHANGELOG bullet | 7 | 6 | — |
+| 1 | `Makefile.docker` dispatch: the `BUILD_TARGET` split, the caller-supplied `VERSION` guard, the composed-reference echo, local-only `upload`/`clean`/`buca`, and narrowing `check-version-tag` / `check-go-mod` to the local arm | 1, 2, 3, 4, 5 | 1, 3, 5, 8 | — |
+| 2 | The build path itself: the five `hack/` files and the module-mode image build | 2, 6 | 2, 4 | prompt 1 (the dispatch calls the runner) |
+| 3 | Docs: the README build section and the CHANGELOG bullet | 7 | 6 | — |
 
-Rationale: prompt 1 is the lifecycle's own prerequisite and is ordered first for that reason — the first implement run failed at prompt 1's metadata write because `prompts/in-progress/` did not exist. Prompt 2 establishes the dispatch and the guard that makes any of it reachable; prompt 3 supplies the runner the dispatch calls and the Dockerfile that works from a clone; prompt 4 is independent and touches no build logic.
+Rationale: prompt 1 establishes the dispatch and the guard that makes any of it reachable; prompt 2 supplies the runner the dispatch calls and the Dockerfile that works from a clone; prompt 3 is independent and touches no build logic.
+
+**The repo-hygiene requirement (DB8 / AC7) is deliberately not a prompt.** It is already in this PR, because no generated prompt can satisfy it: the lifecycle writes each prompt's metadata into `prompts/in-progress/` when that prompt finishes, so a prompt that creates the directory still fails before it can save its own metadata. Measured twice — see the Problem section.
 
 ## Do-Nothing Option
 
