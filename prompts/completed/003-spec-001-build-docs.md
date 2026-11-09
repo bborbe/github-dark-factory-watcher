@@ -1,8 +1,13 @@
 ---
-status: approved
+status: completed
 spec: [001-cluster-build-arm]
+summary: Added the Build + Deploy section to README.md documenting both build arms, shared Docker Hub repo, local-only buca, and hack/ provenance; confirmed the existing CHANGELOG Unreleased bullet; make precommit passes.
+execution_id: 11b29ae5-c10f-55a1-aa9e-e5e68cdcfec0-exec-003-spec-001-build-docs
+dark-factory-version: dev
 created: "2026-11-09T11:42:00Z"
 queued: "2026-11-09T11:49:21Z"
+started: "2026-11-09T11:55:11Z"
+completed: "2026-11-09T11:57:26Z"
 branch: feat/cluster-build-arm
 ---
 
