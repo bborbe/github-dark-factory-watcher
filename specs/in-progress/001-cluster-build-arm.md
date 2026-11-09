@@ -1,7 +1,7 @@
 ---
 status: approved
 approved: "2026-11-09T07:52:25Z"
-branch: dark-factory/cluster-build-arm
+branch: feat/cluster-build-arm
 ---
 
 ## Summary
