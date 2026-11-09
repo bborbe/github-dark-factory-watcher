@@ -1,6 +1,6 @@
 ---
 status: approved
-approved: "2026-11-09T07:15:11Z"
+approved: "2026-11-09T07:52:25Z"
 branch: dark-factory/cluster-build-arm
 ---
 
@@ -10,7 +10,7 @@ branch: dark-factory/cluster-build-arm
 - Its siblings already build their image inside a Kubernetes cluster, unattended, from any committed ref.
 - Add that second build path here as an arm beside the existing local one, leaving the local command and tag as they are.
 - The cluster arm builds a named commit as a Kubernetes Job and pushes the result to the same Docker Hub repository the local arm already tags, so a release no longer needs this machine.
-- One supporting edit makes the arm reachable: the image must build from a fresh clone, which ships without its vendored dependency tree.
+- Two supporting edits make the arm reachable: the image must build from a fresh clone, which ships without its vendored dependency tree; and the repo must carry the dark-factory directory layout, which it has none of today and which lands first.
 
 ## Problem
 
@@ -22,6 +22,7 @@ The arm is not a straight copy. Four properties of this repo change what has to 
 - **`build` is chained to a version guard.** `Makefile.docker:8` reads `build: check-version-tag check-go-mod`, and `check-version-tag` exits 1 unless HEAD's exact tag equals `$(VERSION)`. A scratch-tag cluster build dies at that guard before any Job is created. The guard must be wrapped for the local arm only, and must keep firing for a bare local build.
 - **The image build resolves dependencies from `vendor/`.** `Dockerfile:7` runs `go build -mod=vendor`, and `.gitignore` excludes `/vendor/`, so a fresh clone has no such directory and the build fails before it starts. The Job clones; it does not see a developer's working tree.
 - **`VERSION` has a file default, not a caller contract.** `Makefile.docker:3-5` assigns `VERSION` from the latest tag when the caller sets none. The cluster arm must refuse that value, because a tag nobody chose must never be pushed. The guard belongs after that assignment and must reject `$(origin VERSION)` values `file` and `undefined`.
+- **The repo has none of the directories the prompt lifecycle writes into.** Git creates a directory in a clone only for a path it tracks, so `specs/in-progress/` exists (this spec is tracked there) while `prompts/`, `prompts/in-progress/`, `prompts/completed/` and `specs/completed/` have no tracked file at all, and no `.keep` exists anywhere. Measured on this PR's first implement run (task `43694d77`, 2026-11-09): the agent generated and executed prompt 1, then died at `save prompt metadata: write file: open prompts/in-progress/001-spec-001-makefile-dispatch.md: no such file or directory`. This is the repo-hygiene half of the arm and it is a hard prerequisite, not polish — and because the metadata write happens at the end of prompt 1, the hygiene work has to land *before* any prompt runs.
 
 ## Goal
 
@@ -37,6 +38,7 @@ The arm is not a straight copy. Four properties of this repo change what has to 
 - Extracting the shared build runner into a common upstream template. The files are copied, not shared.
 - Extra build knobs beyond `BUILD_TARGET` and `VERSION`. The image repository is not a knob this spec adds: both arms compose it from the pre-existing `DOCKER_REGISTRY` make variable and `SERVICE`, so the two cannot drift from each other. `DOCKER_REGISTRY` is itself overridable on both arms — that is the local arm's existing behaviour and this spec neither changes nor narrows it. The copy source also carries `ALLOW_DEFAULT_VERSION`, `BUILD_TIMEOUT`, `BUILD_REPO_URL`, `BUILD_DOCKERFILE` and `BUILD_PUSH_SECRET`. `ALLOW_DEFAULT_VERSION` in particular would reintroduce an opt-out on the refusal this spec ships, so it is not copied. The repository URL and the push-secret name are not knobs either: the dispatch passes both as literals, because a configurable clone source on a build that mounts a push credential is a hazard with no use case here.
 - Multi-arch images. `linux/amd64` only, matching the cluster nodes.
+- Building the image in GitHub Actions. `.github/workflows/ci.yml` runs `make precommit` only, holds no registry push credential, and the org's cluster build lane is where images are cut — adding a second, credential-bearing build path is the thing this spec exists to avoid.
 - Running `hack/build-cluster-bootstrap.sh`. The bootstrap pair is copied for parity with the goal's recorded arm-source decision and is never executed here — the `build` namespace and its `buildkit-push` secret already exist in the target cluster. It is not dead code to delete; it is the provisioning path the next cluster needs.
 
 ## Acceptance Criteria
@@ -55,6 +57,8 @@ The arm is not a straight copy. Four properties of this repo change what has to 
   - `dockerconfig.json.tpl` (go-skeleton@eb050aa) `bcf89cfc8cba8b36a2f0b33fdc28a1096bad349dc5207e5e23d417939433bc7a`
 - [ ] **`upload` / `clean` / `buca` stay local, refused at parse time** — `ROOTDIR=/workspace make -n buca | grep -cE 'docker push|docker rmi'` returns ≥ 2; and each of `ROOTDIR=/workspace make -n buca BUILD_TARGET=nukeprod REF=<sha> VERSION=probe`, `… make -n upload BUILD_TARGET=nukeprod VERSION=probe` and `… make -n clean BUILD_TARGET=nukeprod VERSION=probe` exits non-zero and prints a message naming those targets as local-only — all three, not `buca` alone, because `buca: build upload clean apply` means a `$(error)` keyed on `buca` alone would leave `upload` pushing a locally-tagged image under a cluster-intent invocation. The refusal is a parse-time `$(error …)` keyed on `$(MAKECMDGOALS)`, so it fires under `-n` where no recipe runs. Evidence: the count, and all three exit codes with the refusal message.
 - [ ] **The documented build path matches reality** — a new `README.md` `## Build + Deploy` section shows the exact cluster invocation `make build BUILD_TARGET=<cluster> REF=<sha> VERSION=<tag>`, states that `buca` remains local, records that the repository name is the same on both arms, and records where `hack/` came from — both upstream repositories and their SHAs — so a later maintainer can tell a deliberate copy from drift; `CHANGELOG.md` carries a `## Unreleased` section with a bullet for this change. Evidence: `grep -c 'BUILD_TARGET=<cluster> REF=<sha> VERSION=<tag>' README.md` ≥ 1, `grep -c 'docker.io/bborbe/github-dark-factory-watcher' README.md` ≥ 1, `grep -c '^## Build + Deploy$' README.md` = 1, `grep -c 'agent-task-executor' README.md` ≥ 1, `grep -c 'go-skeleton' README.md` ≥ 1, `grep -c '91a7e64e160f30be8af0aea64635e1e11bc86731' README.md` ≥ 1, `grep -c 'eb050aa20bb6194d8af7e47baf8880df789bd1ca' README.md` ≥ 1, `grep -c 'buca' README.md` ≥ 1, `grep -c '^## Unreleased$' CHANGELOG.md` = 1, and `awk '/^## Unreleased$/{f=1;next} /^## /{f=0} f' CHANGELOG.md | grep -c '^- '` ≥ 1 — the last one is what distinguishes a bullet from an empty heading.
+- [ ] **The prompt lifecycle's directories exist in a fresh clone** — `ls -1 prompts/.keep prompts/in-progress/.keep prompts/completed/.keep specs/.keep specs/in-progress/.keep specs/completed/.keep` exits 0, and `grep -cE '^/(\.dark-factory\.(log|lock)|prompts/log|specs/log|prompts/in-progress/\*\.lock|specs/in-progress/\*\.lock)$' .gitignore` returns 6, so the runtime log and lock files stay out of the tree. Evidence: the six paths and the count. ⚠️ A tracked file creates its own directory in a clone — the four directories with no tracked file are the ones this AC exists for, and this repo tracks no `.keep` today.
+- [ ] **The cluster arm refuses a tag it did not receive from the caller** — `ROOTDIR=/workspace make -n build BUILD_TARGET=nukeprod REF=<sha>` with no `VERSION` exits non-zero and names `VERSION` before any Job is rendered; the same invocation where `VERSION` would otherwise fall back to `Makefile.docker:3-5`'s file default refuses too. Evidence: both exit codes and the message. ⚠️ `make -n` is the probe because the refusal must be a parse-time `$(error …)`; a recipe-level refusal is invisible to a dry run, and `VERSION` is never truly undefined here — the file default always supplies one, so the guard must test `$(origin VERSION)` for `file` as well.
 
 ## Verification
 
@@ -68,8 +72,11 @@ The arm is not a straight copy. Four properties of this repo change what has to 
 - `grep -c '^BUILD_TARGET' Makefile.docker` returns ≥ 1
 - `grep -cE '^[[:space:]]*hack/build-cluster\.sh' Makefile.docker` returns ≥ 1
 - `ls -1 hack/` lists the five expected files
+- `ls -1 prompts/.keep prompts/in-progress/.keep prompts/completed/.keep specs/.keep specs/in-progress/.keep specs/completed/.keep` exits 0
+- `grep -cE '^/(\.dark-factory\.(log|lock)|prompts/log|specs/log|prompts/in-progress/\*\.lock|specs/in-progress/\*\.lock)$' .gitignore` returns 6
 - `ROOTDIR=/workspace make -n build` prints a `docker build` recipe and no `hack/build-cluster.sh`
 - `ROOTDIR=/workspace make -n build BUILD_TARGET=nukeprod REF=<sha> VERSION=probe` prints `hack/build-cluster.sh` and the composed `docker.io/bborbe/github-dark-factory-watcher:probe` line
+- `ROOTDIR=/workspace make -n build BUILD_TARGET=nukeprod REF=<sha>` with no `VERSION` exits non-zero and names `VERSION`
 - `ROOTDIR=/workspace make -n buca BUILD_TARGET=nukeprod REF=<sha> VERSION=probe` exits non-zero naming the local-only targets
 - `grep -rn 'BUILD_TARGET' --exclude-dir=vendor --exclude-dir=prompts --exclude-dir=.git . | grep -vc 'Makefile.docker\|README.md\|CHANGELOG.md\|specs/\|hack/'` returns 0 — every reference in the repo names the new invocation; no stale build documentation is left behind. `prompts/` is excluded because the generated prompts necessarily name `BUILD_TARGET`; `hack/` is allow-listed because the five copied runners mention it 17 times by design and Constraint 94 forbids editing them.
 
@@ -90,6 +97,7 @@ The arm is not a straight copy. Four properties of this repo change what has to 
 5. **The guards cover the local arm only.** `check-version-tag` and `check-go-mod` run when `BUILD_TARGET` is `local` and not otherwise: a cluster build compiles a named ref, so preparing the local working tree would be meaningless and the tag guard would refuse a scratch tag. `upload`, `clean` and `buca` remain local-only and are refused at parse time when given a cluster `BUILD_TARGET`.
 6. **The cluster build works from a clone.** `Dockerfile:7` switches from `-mod=vendor` to `-mod=mod`, so the image build resolves its Go dependencies from the module proxy and a Job that clones the repo with no `vendor/` directory builds. `check-go-mod` stays on the local arm unchanged — whether it is still worth running is not this spec's concern, and removing it would change the local arm beyond the arm itself.
 7. **The documented build path matches reality.** The README gains a `## Build + Deploy` section — it does not exist today; `## Development` holds only the three local commands — showing both arms, saying `buca` stays local, and recording that both arms publish to the same Docker Hub repository. The CHANGELOG records the change under `## Unreleased`.
+8. **The lifecycle's own directories exist in a clone.** `prompts/`, `prompts/in-progress/`, `prompts/completed/`, `specs/`, `specs/in-progress/` and `specs/completed/` are tracked through `.keep` files, and the runtime log and lock files they produce are ignored — so a fresh clone has every directory the prompt lifecycle writes into, and a run does not dirty the tree.
 
 ## Constraints
 
@@ -104,6 +112,7 @@ The arm is not a straight copy. Four properties of this repo change what has to 
 - `IMAGE`, `SERVICE`, the registry and the tag must each satisfy the runner's character whitelist; no value may carry a newline.
 - `.dark-factory.yaml` sets `workflow: worktree`, under which git is masked inside the container. Prompts must not run `git` — commits and pushes happen host-side.
 - The new `README.md` `## Build + Deploy` section is the in-repo home for the two-arm topology; the spec dies after implementation, the README does not. It is a new section, not a rewrite of `## Development`, which keeps its three local commands.
+- Track the dark-factory directory layout in the same change: `.keep` files under `prompts/`, `prompts/in-progress/`, `prompts/completed/`, `specs/`, `specs/in-progress/` and `specs/completed/`, plus `.gitignore` entries for `/.dark-factory.log`, `/.dark-factory.lock`, `/prompts/log`, `/specs/log`, `/prompts/in-progress/*.lock` and `/specs/in-progress/*.lock`. Do not delete the existing `.gitignore` entries — `/vendor/` in particular is what keeps `check-go-mod`'s output out of the tree. The pilot carries exactly this layout on `agent-sentry-issue-analyzer`'s `feat/cluster-build-arm` branch (merged as PR #141) — its default branch does not, so read the branch, not the repo. Copy that shape rather than inventing one.
 - No new scenario. The behaviour is reachable by checks on the rendered invocation plus one real cluster build.
 
 ## Assumptions
@@ -155,11 +164,12 @@ Prompts should be generated in this order — each row is a single prompt with a
 
 | # | Prompt focus | Covers DBs | Covers ACs | Depends on |
 |---|---|---|---|---|
-| 1 | `Makefile.docker` dispatch: the `BUILD_TARGET` split, the caller-supplied `VERSION` guard, the composed-reference echo, local-only `upload`/`clean`/`buca`, and narrowing `check-version-tag` / `check-go-mod` to the local arm | 1, 2, 3, 4, 5 | 1, 3, 5 | — |
-| 2 | The build path itself: the five `hack/` files and the module-mode image build | 2, 6 | 2, 4 | prompt 1 (the dispatch calls the runner) |
-| 3 | Docs: the README build section and the CHANGELOG bullet | 7 | 6 | — |
+| 1 | Repo hygiene: the six `.keep` files and the six `.gitignore` entries — **must run first**, because prompt 1's own metadata write needs `prompts/in-progress/` to exist | 8 | 7 | — |
+| 2 | `Makefile.docker` dispatch: the `BUILD_TARGET` split, the caller-supplied `VERSION` guard, the composed-reference echo, local-only `upload`/`clean`/`buca`, and narrowing `check-version-tag` / `check-go-mod` to the local arm | 1, 2, 3, 4, 5 | 1, 3, 5, 8 | prompt 1 |
+| 3 | The build path itself: the five `hack/` files and the module-mode image build | 2, 6 | 2, 4 | prompt 2 (the dispatch calls the runner) |
+| 4 | Docs: the README build section and the CHANGELOG bullet | 7 | 6 | — |
 
-Rationale: prompt 1 establishes the dispatch and the guard that makes any of it reachable; prompt 2 supplies the runner the dispatch calls and the Dockerfile that works from a clone; prompt 3 is independent and touches no build logic.
+Rationale: prompt 1 is the lifecycle's own prerequisite and is ordered first for that reason — the first implement run failed at prompt 1's metadata write because `prompts/in-progress/` did not exist. Prompt 2 establishes the dispatch and the guard that makes any of it reachable; prompt 3 supplies the runner the dispatch calls and the Dockerfile that works from a clone; prompt 4 is independent and touches no build logic.
 
 ## Do-Nothing Option
 
