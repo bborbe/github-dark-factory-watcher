@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- chore: update github.com/bborbe/agent to v0.139.7, github.com/bborbe/http to v1.26.33, github.com/bborbe/kafka to v1.29.13, github.com/bborbe/kv to v1.21.29, github.com/bborbe/log to v1.7.8, github.com/bborbe/maintainer to v0.51.1, github.com/bborbe/run to v1.11.11, github.com/bborbe/service to v1.11.3, github.com/bborbe/time to v1.27.27, github.com/bborbe/validation to v1.5.9
+
 ## v0.7.0
 
 - feat: Add a cluster build arm to `make build`, selected by `BUILD_TARGET` (default `local`); the cluster arm prints the composed image reference and runs `hack/build-cluster.sh`, requires a caller-supplied `VERSION`, and refuses the local-only `upload`, `clean` and `buca` goals at parse time
