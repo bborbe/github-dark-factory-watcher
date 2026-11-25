@@ -8,13 +8,23 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/bborbe/errors"
+	libhttp "github.com/bborbe/http"
 	libtime "github.com/bborbe/time"
+	"github.com/golang/glog"
 	gogithub "github.com/google/go-github/v62/github"
 )
+
+// githubAPIInflightBound caps the concurrent GitHub API requests this watcher
+// issues. GitHub's secondary rate limit is a concurrency heuristic, so a retry
+// that fires more requests in parallel makes it worse; four keeps the poll
+// fan-out under the heuristic while leaving room to make progress.
+const githubAPIInflightBound = 4
 
 // PullRequest holds the fields the watcher needs from a GitHub PR search result.
 type PullRequest struct {
@@ -105,20 +115,51 @@ type GitHubClient interface {
 // exhaustion or secondary rate limiting. go-github does not log at its HTTP
 // boundary, so without this line that evidence is lost. A nil httpClient is
 // left unwrapped so the go-github default client still works.
-func NewGitHubClient(httpClient *http.Client) GitHubClient {
+func NewGitHubClient(httpClient *http.Client, apiBaseURL string) GitHubClient {
 	if httpClient != nil {
 		inner := httpClient.Transport
 		if inner == nil {
 			inner = http.DefaultTransport
 		}
-		httpClient.Transport = &non2xxLoggingTransport{
-			inner: inner,
-			log:   logNon2xxV2,
-		}
+		// Chain, outermost first: retry → log → limit → network. The retry sits
+		// outside the non-2xx log so every attempt is logged; the limiter is
+		// innermost so it bounds actual requests, and a retry re-acquires a slot
+		// rather than holding one across the wait.
+		httpClient.Transport = libhttp.NewRoundTripperRetryWithBackoff(
+			&non2xxLoggingTransport{
+				inner: libhttp.NewRoundTripperLimitConcurrency(
+					inner,
+					githubAPIInflightBound,
+					nil,
+				),
+				log: logNon2xxV2,
+			},
+			libhttp.RetryBackoffOptions{},
+		)
 	}
+	client := gogithub.NewClient(httpClient)
+	applyAPIBaseURL(client, apiBaseURL)
 	return &githubClient{
-		client: gogithub.NewClient(httpClient),
+		client: client,
 	}
+}
+
+// applyAPIBaseURL points the go-github client at an override base URL. An empty
+// value keeps https://api.github.com. The path gets a trailing slash because
+// go-github resolves request paths against it as a directory.
+func applyAPIBaseURL(client *gogithub.Client, apiBaseURL string) {
+	if apiBaseURL == "" {
+		return
+	}
+	u, err := url.Parse(apiBaseURL)
+	if err != nil {
+		glog.Warningf("invalid GITHUB_API_BASE_URL %q, keeping the default: %v", apiBaseURL, err)
+		return
+	}
+	if !strings.HasSuffix(u.Path, "/") {
+		u.Path += "/"
+	}
+	client.BaseURL = u
 }
 
 type githubClient struct {

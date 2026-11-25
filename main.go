@@ -100,21 +100,22 @@ type application struct {
 	SentryDSN   string `required:"false" arg:"sentry-dsn"   env:"SENTRY_DSN"   usage:"SentryDSN"    display:"length"`
 	SentryProxy string `required:"false" arg:"sentry-proxy" env:"SENTRY_PROXY" usage:"Sentry Proxy"`
 
-	Listen           string           `required:"false" arg:"listen"            env:"LISTEN"            usage:"HTTP listen address (healthz/readiness/metrics)"                                                                                                                 default:":9090"`
-	AppID            int64            `required:"false" arg:"app-id"            env:"APP_ID"            usage:"GitHub App ID (numeric); requires InstallationID + PEMKey to be set for App auth"`
-	InstallationID   int64            `required:"false" arg:"installation-id"   env:"INSTALLATION_ID"   usage:"GitHub App Installation ID (numeric)"`
-	PEMKey           string           `required:"false" arg:"pem-key"           env:"PEM_KEY"           usage:"GitHub App private key (PEM content from k8s Secret envFrom)"                                                                                                                     display:"length"`
-	KafkaBrokers     libkafka.Brokers `required:"true"  arg:"kafka-brokers"     env:"KAFKA_BROKERS"     usage:"Comma-separated Kafka broker list"`
-	Stage            string           `required:"true"  arg:"stage"             env:"STAGE"             usage:"Deployment stage (dev|prod)"`
-	PollInterval     string           `required:"false" arg:"poll-interval"     env:"POLL_INTERVAL"     usage:"Poll interval (Go duration)"                                                                                                                                     default:"5m"`
-	RepoScope        string           `required:"false" arg:"repo-scope"        env:"REPO_SCOPE"        usage:"GitHub user/org scope"                                                                                                                                           default:"bborbe"`
-	BackfillDuration string           `required:"false" arg:"backfill-duration" env:"BACKFILL_DURATION" usage:"On cold start, backdate the initial cursor by this duration (Go duration; empty disables)"                                                                       default:"720h"`
-	RepoAllowlist    string           `required:"false" arg:"repo-allowlist"    env:"REPO_ALLOWLIST"    usage:"Comma-separated host-qualified repo allowlist (host/owner/repo format); empty means allow-all"`
-	MaxSlugLen       int              `required:"false" arg:"max-slug-len"      env:"MAX_SLUG_LEN"      usage:"Max length of slugified PR-title segment in vault filenames"                                                                                                     default:"80"`
-	MaxTitleLen      int              `required:"false" arg:"max-title-len"     env:"MAX_TITLE_LEN"     usage:"Max length of vault task filename (whole title; safety cap)"                                                                                                     default:"200"`
-	TaskSuffix       string           `required:"false" arg:"task-suffix"       env:"TASK_SUFFIX"       usage:"Optional suffix appended to task filenames as ' - suffix'; empty = no suffix."`
-	TargetVault      string           `required:"false" arg:"target-vault"      env:"TARGET_VAULT"      usage:"Vault slug stamped on every CreateTaskCommand (matched verbatim against the controller's VAULT_NAME). Empty leaves it unset."`
-	RepoVaultMap     string           `required:"false" arg:"repo-vault-map"    env:"REPO_VAULT_MAP"    usage:"Comma-separated repo-glob=vault entries; the first match sets the command's target_vault, unmapped repos fall back to openclaw. Empty keeps the legacy default."`
+	Listen           string           `required:"false" arg:"listen"            env:"LISTEN"              usage:"HTTP listen address (healthz/readiness/metrics)"                                                                                                                 default:":9090"`
+	AppID            int64            `required:"false" arg:"app-id"            env:"APP_ID"              usage:"GitHub App ID (numeric); requires InstallationID + PEMKey to be set for App auth"`
+	InstallationID   int64            `required:"false" arg:"installation-id"   env:"INSTALLATION_ID"     usage:"GitHub App Installation ID (numeric)"`
+	PEMKey           string           `required:"false" arg:"pem-key"           env:"PEM_KEY"             usage:"GitHub App private key (PEM content from k8s Secret envFrom)"                                                                                                                     display:"length"`
+	APIBaseURL       string           `required:"false" arg:"api-base-url"      env:"GITHUB_API_BASE_URL" usage:"GitHub API base URL override (empty = https://api.github.com); used to point the watcher at a stub"`
+	KafkaBrokers     libkafka.Brokers `required:"true"  arg:"kafka-brokers"     env:"KAFKA_BROKERS"       usage:"Comma-separated Kafka broker list"`
+	Stage            string           `required:"true"  arg:"stage"             env:"STAGE"               usage:"Deployment stage (dev|prod)"`
+	PollInterval     string           `required:"false" arg:"poll-interval"     env:"POLL_INTERVAL"       usage:"Poll interval (Go duration)"                                                                                                                                     default:"5m"`
+	RepoScope        string           `required:"false" arg:"repo-scope"        env:"REPO_SCOPE"          usage:"GitHub user/org scope"                                                                                                                                           default:"bborbe"`
+	BackfillDuration string           `required:"false" arg:"backfill-duration" env:"BACKFILL_DURATION"   usage:"On cold start, backdate the initial cursor by this duration (Go duration; empty disables)"                                                                       default:"720h"`
+	RepoAllowlist    string           `required:"false" arg:"repo-allowlist"    env:"REPO_ALLOWLIST"      usage:"Comma-separated host-qualified repo allowlist (host/owner/repo format); empty means allow-all"`
+	MaxSlugLen       int              `required:"false" arg:"max-slug-len"      env:"MAX_SLUG_LEN"        usage:"Max length of slugified PR-title segment in vault filenames"                                                                                                     default:"80"`
+	MaxTitleLen      int              `required:"false" arg:"max-title-len"     env:"MAX_TITLE_LEN"       usage:"Max length of vault task filename (whole title; safety cap)"                                                                                                     default:"200"`
+	TaskSuffix       string           `required:"false" arg:"task-suffix"       env:"TASK_SUFFIX"         usage:"Optional suffix appended to task filenames as ' - suffix'; empty = no suffix."`
+	TargetVault      string           `required:"false" arg:"target-vault"      env:"TARGET_VAULT"        usage:"Vault slug stamped on every CreateTaskCommand (matched verbatim against the controller's VAULT_NAME). Empty leaves it unset."`
+	RepoVaultMap     string           `required:"false" arg:"repo-vault-map"    env:"REPO_VAULT_MAP"      usage:"Comma-separated repo-glob=vault entries; the first match sets the command's target_vault, unmapped repos fall back to openclaw. Empty keeps the legacy default."`
 
 	// TopicPrefix selects the Kafka topic prefix used for CQRS topic construction
 	// (e.g. "develop" / "master"); independent of Stage.
@@ -160,7 +161,7 @@ func (a *application) resolveAuth(ctx context.Context) (*http.Client, error) {
 		appID,
 		installationID,
 	)
-	return factory.CreateGitHubAppClient(ctx, appID, installationID, pemKey)
+	return factory.CreateGitHubAppClient(ctx, appID, installationID, pemKey, a.APIBaseURL)
 }
 
 func (a *application) validateConfig(ctx context.Context) error {
@@ -242,7 +243,7 @@ func (a *application) Run(ctx context.Context, _ libsentry.Client) error {
 		return errors.Wrap(ctx, err, "resolve auth")
 	}
 
-	ghClient := pkg.NewGitHubClient(httpClient)
+	ghClient := pkg.NewGitHubClient(httpClient, a.APIBaseURL)
 	metrics := pkg.NewMetrics(nil)
 
 	taskCfg := pkg.TaskConfig{

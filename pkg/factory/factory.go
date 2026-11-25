@@ -31,11 +31,13 @@ func CreateGitHubAppClient(
 	appID int64,
 	installationID int64,
 	pemKey []byte,
+	baseURL string,
 ) (*http.Client, error) {
 	cfg := githubapp.Config{
 		AppID:          appID,
 		InstallationID: installationID,
 		PEM:            pemKey,
+		BaseURL:        baseURL,
 	}
 	return githubapp.NewClient(ctx, cfg)
 }
