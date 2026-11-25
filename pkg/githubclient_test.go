@@ -275,7 +275,7 @@ var _ = Describe("pkg.GitHubClient", func() {
 
 	Describe("IsNotFound", func() {
 		It("returns false for a nil or non-GitHub error", func() {
-			client := pkg.NewGitHubClient(nil)
+			client := pkg.NewGitHubClient(nil, "")
 			Expect(client.IsNotFound(nil)).To(BeFalse())
 			Expect(client.IsNotFound(context.Canceled)).To(BeFalse())
 		})
